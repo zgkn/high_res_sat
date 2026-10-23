@@ -1,0 +1,70 @@
+name: Sentinel-2 true colour
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "Start date (YYYY-MM-DD)"
+        required: true
+        type: string
+      end_date:
+        description: "End date (YYYY-MM-DD, inclusive)"
+        required: true
+        type: string
+      bbox:
+        description: "min_lon,min_lat,max_lon,max_lat"
+        default: "114,-2,115,-1"
+        type: string
+      max_cloud:
+        description: "Scene-level eo:cloud_cover pre-filter (%)"
+        default: "60"
+        type: string
+      accept_cloud:
+        description: "Max SCL cloud (%) inside the bbox for a date to be acceptable"
+        default: "20"
+        type: string
+      max_px:
+        description: "Longest side of the output image (px)"
+        default: "2500"
+        type: string
+
+jobs:
+  truecolour:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pystac-client rasterio numpy matplotlib pillow
+
+      - name: Make true-colour image
+        env:
+          START_DATE: ${{ inputs.start_date }}
+          END_DATE: ${{ inputs.end_date }}
+          BBOX: ${{ inputs.bbox }}
+          MAX_CLOUD: ${{ inputs.max_cloud }}
+          ACCEPT_CLOUD: ${{ inputs.accept_cloud }}
+          MAX_PX: ${{ inputs.max_px }}
+        run: |
+          python scripts/s2_truecolour.py \
+            --start-date "$START_DATE" \
+            --end-date "$END_DATE" \
+            --bbox "$BBOX" \
+            --max-cloud "$MAX_CLOUD" \
+            --accept-cloud "$ACCEPT_CLOUD" \
+            --max-px "$MAX_PX" \
+            --outdir output
+
+      - name: Upload outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s2-truecolour
+          path: output/
+          retention-days: 30
+          if-no-files-found: warn
