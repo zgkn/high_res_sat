@@ -26,7 +26,7 @@
   function byId(id) { return RUNS.filter(function (r) { return r.id === id; })[0]; }
 
   // ---------------------------------------------------------------- state
-  var S = { run: null, mode: "view", prod: "truecolour", left: null, right: null, area: "all" };
+  var S = { run: null, mode: "view", prod: "truecolour", left: null, right: null, area: "all", sat: "all", open: {} };
 
   function readHash() {
     var o = {};
@@ -42,32 +42,61 @@
   }
 
   // ---------------------------------------------------------------- run list
+  // Runs are grouped by area of interest: the label if one was given, else the bounding box. (Compare and
+  // the map still match on the exact box, so overlays line up.)
+  function groupKey(r) { return r.label ? "L:" + r.label.trim().toLowerCase() : "B:" + areaKey(r); }
+  function groupName(r) { return r.label ? r.label.trim() : bboxTxt(r.bbox); }
+  function satKey(r) { return r.source || "sentinel-2"; }
+  function satLabel(r) { return r.satellite || "Sentinel-2"; }
+  function unique(a) { return a.filter(function (v, i) { return a.indexOf(v) === i; }); }
+
   function renderList() {
-    var sel = $("#areaFilter"), areas = {}, order = [];
+    var groups = {}, order = [];
     RUNS.forEach(function (r) {
-      var k = areaKey(r);
-      if (!areas[k]) { areas[k] = areaName(r); order.push(k); }
+      var k = groupKey(r);
+      if (!groups[k]) { groups[k] = { name: groupName(r), runs: [] }; order.push(k); }
+      groups[k].runs.push(r);
     });
-    sel.innerHTML = '<option value="all">All areas (' + RUNS.length + " runs)</option>" +
-      order.map(function (k) { return '<option value="' + esc(k) + '">' + esc(areas[k]) + "</option>"; }).join("");
-    if (!areas[S.area]) S.area = "all";
+    var sel = $("#areaFilter");
+    sel.innerHTML = '<option value="all">All areas (' + order.length + ")</option>" + order.map(function (k) {
+      return '<option value="' + esc(k) + '">' + esc(groups[k].name) + " (" + groups[k].runs.length + ")</option>";
+    }).join("");
+    if (!groups[S.area]) S.area = "all";
     sel.value = S.area;
 
-    var html = "", last = null;
-    RUNS.forEach(function (r) {
-      var k = areaKey(r);
+    var sats = unique(RUNS.map(satKey)), satNames = { "sentinel-2": "Sentinel-2", "landsat": "Landsat 8/9" };
+    var ss = $("#satFilter");
+    ss.hidden = sats.length < 2;
+    ss.innerHTML = '<option value="all">All satellites</option>' + sats.map(function (k) {
+      return '<option value="' + esc(k) + '">' + esc(satNames[k] || k) + "</option>";
+    }).join("");
+    if (S.sat !== "all" && sats.indexOf(S.sat) < 0) S.sat = "all";
+    ss.value = S.sat;
+
+    var html = "";
+    order.forEach(function (k) {
       if (S.area !== "all" && k !== S.area) return;
-      if (k !== last) { html += '<div class="area">' + esc(areas[k]) + "</div>"; last = k; }
-      html += '<button type="button" class="card" data-id="' + esc(r.id) + '"' +
-        (r.id === S.run ? ' aria-current="true"' : "") + ">" +
-        '<img loading="lazy" alt="" src="' + esc(r.thumb) + '">' +
-        "<div><div class=\"d\">" + esc(r.date) + "</div>" +
-        '<div class="m">Cloud ' + pct(r.cloud_scl) + " &middot; coverage " + pct(r.coverage) + "</div>" +
-        "<div>" + r.composites.map(function (c) { return '<span class="chip">' + esc(SHORT[c] || c) + "</span>"; }).join("") +
-        (r.source === "landsat" ? '<span class="chip">' + esc(r.satellite) + "</span>" : "") +
-        (r.fallback ? '<span class="chip warn">Fallback</span>' : "") + "</div></div></button>";
+      var g = groups[k];
+      var runs = g.runs.filter(function (r) { return S.sat === "all" || satKey(r) === S.sat; });
+      if (!runs.length) return;
+      var hasSel = runs.some(function (r) { return r.id === S.run; });
+      var open = S.open[k] !== undefined ? S.open[k] : (hasSel || order.length === 1 || S.area !== "all");
+      html += '<details class="group" data-key="' + esc(k) + '"' + (open ? " open" : "") + "><summary>" +
+        '<span class="gname">' + esc(g.name) + "</span>" +
+        '<span class="gmeta">' + runs.length + " run" + (runs.length === 1 ? "" : "s") + " &middot; " +
+        esc(unique(runs.map(satLabel)).join(", ")) + "</span></summary>";
+      runs.forEach(function (r) {
+        html += '<button type="button" class="card" data-id="' + esc(r.id) + '"' +
+          (r.id === S.run ? ' aria-current="true"' : "") + ">" +
+          '<img loading="lazy" alt="" src="' + esc(r.thumb) + '">' +
+          '<div><div class="d">' + esc(r.date) + "</div>" +
+          '<div class="m">' + esc(satLabel(r)) + " &middot; cloud " + pct(r.cloud_scl) + " &middot; coverage " + pct(r.coverage) + "</div>" +
+          "<div>" + r.composites.map(function (c) { return '<span class="chip">' + esc(SHORT[c] || c) + "</span>"; }).join("") +
+          (r.fallback ? '<span class="chip warn">Fallback</span>' : "") + "</div></div></button>";
+      });
+      html += "</details>";
     });
-    $("#runList").innerHTML = html || '<div class="empty">No runs in this area.</div>';
+    $("#runList").innerHTML = html || '<div class="empty">No runs match these filters.</div>';
   }
 
   // ---------------------------------------------------------------- toolbar
@@ -81,6 +110,9 @@
       });
     });
     return out;
+  }
+  function entLabel(e) {
+    return e.run.date + " · " + (SHORT[e.prod] || e.prod) + (e.run.source === "landsat" ? " · " + e.run.satellite : "");
   }
   function entry(key) {
     var p = (key || "").split("|"), r = byId(p[0]);
@@ -101,7 +133,7 @@
     $("#opBar").hidden = S.mode !== "map";
     if (S.mode === "compare") {
       var opts = imageEntries(r).map(function (e) {
-        return '<option value="' + esc(e.key) + '">' + esc(e.run.date + " · " + (SHORT[e.prod] || e.prod)) + "</option>";
+        return '<option value="' + esc(e.key) + '">' + esc(entLabel(e)) + "</option>";
       }).join("");
       $("#selL").innerHTML = opts; $("#selR").innerHTML = opts;
       $("#selL").value = S.left; $("#selR").value = S.right;
@@ -188,8 +220,8 @@
     layerR.hidden = !compare; divider.hidden = !compare;
     $("#tagL").hidden = !compare; $("#tagR").hidden = !compare;
     if (compare) {
-      $("#tagL").textContent = leftE.run.date + " · " + SHORT[leftE.prod];
-      $("#tagR").textContent = rightE.run.date + " · " + SHORT[rightE.prod];
+      $("#tagL").textContent = entLabel(leftE);
+      $("#tagR").textContent = entLabel(rightE);
     }
     geo = { bbox: leftE.run.bbox };
     dim.w = leftE.run.size[0]; dim.h = leftE.run.size[1];
@@ -336,7 +368,7 @@
     writeHash();
   }
 
-  function selectRun(id) { S.run = id; resetViewSoon(); render(); }
+  function selectRun(id) { S.run = id; S.open[groupKey(byId(id))] = true; resetViewSoon(); render(); }
   function resetViewSoon() { T.k = 1; T.x = 0; T.y = 0; }
 
   $("#runList").addEventListener("click", function (e) {
@@ -344,6 +376,11 @@
     if (c) selectRun(c.dataset.id);
   });
   $("#areaFilter").addEventListener("change", function () { S.area = this.value; renderList(); });
+  $("#satFilter").addEventListener("change", function () { S.sat = this.value; renderList(); });
+  // <details> toggles don't bubble, so listen in the capture phase to remember which groups are open
+  $("#runList").addEventListener("toggle", function (e) {
+    var d = e.target; if (d.classList && d.classList.contains("group")) S.open[d.dataset.key] = d.open;
+  }, true);
   $("#modeTabs").addEventListener("click", function (e) {
     var b = e.target.closest("button"); if (!b) return;
     S.mode = b.dataset.mode; resetViewSoon(); render();
@@ -363,6 +400,7 @@
   }
   var h = readHash();
   S.run = byId(h.run) ? h.run : RUNS[0].id;
+  S.open[groupKey(byId(S.run))] = true;
   if (/^(view|compare|map)$/.test(h.mode || "")) S.mode = h.mode;
   if (h.p) S.prod = h.p;
   $("#subtitle").textContent = RUNS.length + " run" + (RUNS.length === 1 ? "" : "s") +
