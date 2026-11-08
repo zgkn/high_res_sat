@@ -22,6 +22,7 @@ GitHub web or mobile app: **Actions** → **Sentinel-2 true colour** → **Run w
 | `accept_cloud` | 20 | Max SCL cloud (%) **inside the bbox** for a date to count as acceptable |
 | `max_px` | 2500 | Longest side of the output image |
 | `composite` | `truecolour` | `truecolour`, `swir` (B12/B8A/B4: burn scars, sees through thin smoke) or `both` |
+| `tc_style` | `soft` | True colour tone. `soft` rolls highlights off so clouds keep their texture; `esa` is the Sentinel-2 product as is, where every cloud clips to white. Land looks the same in both. |
 | `label` | blank | Optional area name shown on the site (blank = the bbox) |
 | `publish` | on | Add the run to the viewer site |
 

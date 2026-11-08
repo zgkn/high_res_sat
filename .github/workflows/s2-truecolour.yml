@@ -35,6 +35,13 @@ on:
           - truecolour
           - swir
           - both
+      tc_style:
+        description: "True colour tone: soft (clouds keep detail) or esa (original, clouds clip to white)"
+        default: soft
+        type: choice
+        options:
+          - soft
+          - esa
       label:
         description: "Optional area name shown on the site (blank = the bbox)"
         default: ""
@@ -71,6 +78,7 @@ jobs:
           MAX_PX: ${{ inputs.max_px }}
           COMPOSITE: ${{ inputs.composite }}
           LABEL: ${{ inputs.label }}
+          TC_STYLE: ${{ inputs.tc_style }}
         run: |
           python scripts/s2_truecolour.py \
             --start-date "$START_DATE" \
@@ -80,6 +88,7 @@ jobs:
             --accept-cloud "$ACCEPT_CLOUD" \
             --max-px "$MAX_PX" \
             --composite "$COMPOSITE" \
+            --tc-style "$TC_STYLE" \
             --label "$LABEL" \
             --outdir output
 

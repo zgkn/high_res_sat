@@ -48,6 +48,11 @@ M_PER_DEG = 111_320.0
 SWIR_ASSETS = ("swir22", "nir08", "red")
 SWIR_RANGE = ((0.0, 0.40), (0.0, 0.50), (0.0, 0.20))
 SWIR_GAMMA = 0.6
+# True colour from the raw bands. The ESA "visual" asset is the raw value / 10 (black level lifted by the
+# +0.1 offset), which clips to white at only ~15 % reflectance, so every cloud saturates. "soft" keeps that
+# exact curve up to the knee (land is unchanged, within ~3/255) and rolls highlights off smoothly above it.
+TC_KNEE = 0.666   # output level where the roll-off starts (reflectance ~0.07)
+TC_ROLL = 1.2     # roll-off length, in units of the ESA scale (bigger = brighter clouds)
 SWIR_CAPTION = ("Burn scars: dark red/brown | active fire: bright orange | "
                 "vegetation: green | cloud: white | thin smoke: mostly transparent")
 
@@ -85,6 +90,9 @@ def parse_args(argv=None):
                    default="truecolour",
                    help="truecolour = B4/B3/B2; swir = B12/B8A/B4 (burn scars, "
                         "sees through thin smoke); both = one of each")
+    p.add_argument("--tc-style", choices=["soft", "esa"], default="soft",
+                   help="true colour tone: soft = highlights rolled off so clouds keep "
+                        "detail (default); esa = the Sentinel-2 'visual' asset as is")
     p.add_argument("--label", default="",
                    help="optional area name shown on the site (default: the bbox)")
     p.add_argument("--min-coverage", type=float, default=90,
@@ -325,10 +333,31 @@ def swir_item(item, bbox, w, h):
     return out
 
 
+def truecolour_item(item, bbox, w, h):
+    """B4/B3/B2 -> 8-bit RGB with the ESA curve below TC_KNEE and a soft shoulder above."""
+    out = np.zeros((3, h, w), np.uint8)
+    valid = np.ones((h, w), bool)
+    for i, key in enumerate(("red", "green", "blue")):
+        asset = item.assets[key]
+        dn = read_item(asset.href, bbox, w, h, [1], Resampling.average)[0]
+        rb = asset.extra_fields.get("raster:bands", [{}])[0]
+        refl = dn * rb.get("scale", 1e-4) + rb.get("offset", -0.1)
+        valid &= dn > 0
+        t = (refl + 0.1) / 0.255  # what the ESA product encodes (0..1 = 0..255)
+        over = np.maximum(t, TC_KNEE)
+        y = np.where(t <= TC_KNEE, t,
+                     TC_KNEE + (1 - TC_KNEE) * (1 - np.exp(-(over - TC_KNEE) / TC_ROLL)))
+        out[i] = (1 + np.clip(y, 0, 1) * 254).astype(np.uint8)
+    out[:, ~valid] = 0
+    return out
+
+
 def render(row, bbox, args, composite):
     w, h, transform = make_grid(bbox, args.max_px)
     if composite == "swir":
         read = lambda it: swir_item(it, bbox, w, h)
+    elif args.tc_style == "soft":
+        read = lambda it: truecolour_item(it, bbox, w, h)
     else:
         read = lambda it: read_item(it.assets["visual"].href, bbox, w, h,
                                     [1, 2, 3], Resampling.average)
@@ -427,7 +456,7 @@ def write_run_json(outdir, args, bbox, chosen, reason, fallback, composites,
         "dates_considered": n_dates,
         "inputs": {"start_date": args.start_date, "end_date": args.end_date,
                    "max_cloud": args.max_cloud, "accept_cloud": args.accept_cloud,
-                   "max_px": args.max_px, "pick": args.pick,
+                   "max_px": args.max_px, "pick": args.pick, "tc_style": args.tc_style,
                    "min_coverage": args.min_coverage},
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "run_url": run_url,
