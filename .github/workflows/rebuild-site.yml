@@ -1,0 +1,26 @@
+name: Rebuild viewer site
+
+# Refreshes the viewer page (index.html, assets, data.js) on the s2-output branch from the code on this
+# branch, without running any satellite analysis. Use it after changing site/ or scripts/build_site.py.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: s2-output
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild and publish the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTPUT_BRANCH: s2-output
+        run: bash scripts/publish_site.sh
