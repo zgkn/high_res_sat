@@ -100,6 +100,29 @@
   }
 
   // ---------------------------------------------------------------- toolbar
+  // An area of interest here = one label (or box) with one exact box, since that is what timelines, compare
+  // and the map can line up. A label used with several boxes is listed once per box.
+  function aoiKey(r) { return groupKey(r) + "|" + areaKey(r); }
+  function aoiList() {
+    var map = {}, order = [], perGroup = {};
+    RUNS.forEach(function (r) {   // RUNS is newest first, so runs[0] is the latest image of the area
+      var k = aoiKey(r);
+      if (!map[k]) { map[k] = { key: k, gk: groupKey(r), name: groupName(r), box: bboxTxt(r.bbox), runs: [] }; order.push(k); }
+      map[k].runs.push(r);
+    });
+    order.forEach(function (k) { perGroup[map[k].gk] = (perGroup[map[k].gk] || 0) + 1; });
+    return order.map(function (k) {
+      var a = map[k];
+      if (perGroup[a.gk] > 1) a.name += " (" + a.box + ")";
+      return a;
+    });
+  }
+  function pickArea(key) {   // show the newest image of that area, keeping the current mode
+    var a = aoiList().filter(function (x) { return x.key === key; })[0];
+    if (!a) return;
+    var r = a.runs.filter(function (x) { return x.images[S.prod]; })[0] || a.runs[0];
+    selectRun(r.id);
+  }
   function imageEntries(r) {
     // every (run, product) of the same area, newest first
     var k = areaKey(r), out = [];
@@ -120,7 +143,11 @@
   }
 
   function renderToolbar() {
-    var r = byId(S.run);
+    var r = byId(S.run), aois = aoiList(), cur = aoiKey(r);
+    $("#aoiSel").innerHTML = aois.map(function (a) {
+      return '<option value="' + esc(a.key) + '">' + esc(a.name) + " (" + a.runs.length + ")</option>";
+    }).join("");
+    $("#aoiSel").value = cur;
     Array.prototype.forEach.call(document.querySelectorAll("#modeTabs button"), function (b) {
       b.setAttribute("aria-selected", b.dataset.mode === S.mode ? "true" : "false");
     });
@@ -522,7 +549,14 @@
     var c = e.target.closest(".card");
     if (c) selectRun(c.dataset.id);
   });
-  $("#areaFilter").addEventListener("change", function () { S.area = this.value; renderList(); });
+  $("#aoiSel").addEventListener("change", function () { pickArea(this.value); });
+  $("#areaFilter").addEventListener("change", function () {
+    S.area = this.value;
+    if (S.area === "all") { renderList(); return; }
+    // choosing an area in the list also shows it: the newest image of that area
+    var first = RUNS.filter(function (r) { return groupKey(r) === S.area; })[0];
+    if (first && groupKey(byId(S.run)) !== S.area) pickArea(aoiKey(first)); else renderList();
+  });
   $("#satFilter").addEventListener("change", function () { S.sat = this.value; renderList(); if (S.mode === "timeline") { tlPlay(false); tlRebuild(); } });
   // <details> toggles don't bubble, so listen in the capture phase to remember which groups are open
   $("#runList").addEventListener("toggle", function (e) {
