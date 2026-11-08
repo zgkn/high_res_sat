@@ -336,7 +336,7 @@
   window.addEventListener("resize", function () { if (S.mode !== "map") layout(); });
 
   // ---------------------------------------------------------------- map
-  var map = null, overlay = null, overlayKey = null;
+  var map = null, overlay = null, overlayKey = null, aoiGroup = null;
   function ensureMap() {
     if (map) return;
     map = L.map("map", { worldCopyJump: false });
@@ -346,12 +346,27 @@
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
         maxZoom: 19, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" });
     osm.addTo(map);
-    L.control.layers({ "OpenStreetMap": osm, "Esri imagery": esri, "No basemap": L.layerGroup() }, null,
-      { collapsed: true }).addTo(map);
+    aoiGroup = L.layerGroup().addTo(map);   // outline + centre of the area of interest, switchable
+    L.control.layers({ "OpenStreetMap": osm, "Esri imagery": esri, "No basemap": L.layerGroup() },
+      { "Area of interest outline": aoiGroup }, { collapsed: true }).addTo(map);
     L.control.scale({ imperial: false }).addTo(map);
+  }
+  // Dashed outline of the exact box (dark halo under a bright line so it reads on imagery and on the
+  // basemap), a dot at the centre and a label with the area name and the centre coordinates.
+  function drawAoi(r) {
+    var b = r.bbox, bounds = [[b[1], b[0]], [b[3], b[2]]];
+    var c = [(b[1] + b[3]) / 2, (b[0] + b[2]) / 2];
+    aoiGroup.clearLayers();
+    L.rectangle(bounds, { color: "#000", weight: 4, opacity: 0.45, fill: false, interactive: false }).addTo(aoiGroup);
+    L.rectangle(bounds, { color: "#ffd400", weight: 2, fill: false, dashArray: "7 5", interactive: false }).addTo(aoiGroup);
+    L.circleMarker(c, { radius: 5, color: "#000", weight: 1, fillColor: "#ffd400", fillOpacity: 1, interactive: false })
+      .bindTooltip(areaName(r) + " \u00b7 " + latTxt(c[0]) + ", " + lonTxt(c[1]),
+        { permanent: true, direction: "right", offset: [8, 0], className: "aoi-tip" })
+      .addTo(aoiGroup);
   }
   function showMap(r) {
     ensureMap();
+    drawAoi(r);
     var key = r.id + "|" + S.prod, b = r.bbox;
     // The image is linear in degrees; Leaflet stretches it linearly in Web Mercator. Over boxes of a
     // few degrees near the equator the difference is a few pixels at most.

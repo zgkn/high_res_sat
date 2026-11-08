@@ -145,3 +145,7 @@ select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-
   .aoi { display: flex; flex: 1 1 100%; min-width: 0; max-width: 100%; }
   .aoi select { flex: 1 1 0; min-width: 0; width: 0; max-width: none; }
 }
+
+/* map: area-of-interest label */
+.leaflet-tooltip.aoi-tip { background: rgba(0, 0, 0, .72); color: #fff; border: 0; box-shadow: none; font-size: .75rem; padding: 2px 8px; }
+.leaflet-tooltip.aoi-tip::before { display: none; }
