@@ -137,3 +137,11 @@ select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-
 @media (max-width: 860px) {
   .stage, .map { height: min(100vw, 62vh); min-height: 260px; }
 }
+
+/* area picker in the viewer toolbar */
+.aoi { font-size: .8rem; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+.aoi select { max-width: 280px; font-size: .9rem; color: var(--fg); }
+@media (max-width: 860px) {
+  .aoi { display: flex; flex: 1 1 100%; min-width: 0; max-width: 100%; }
+  .aoi select { flex: 1 1 0; min-width: 0; width: 0; max-width: none; }
+}
