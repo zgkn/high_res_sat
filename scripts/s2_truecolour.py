@@ -19,13 +19,15 @@ No API key needed. Runs locally or in GitHub Actions.
 """
 import argparse
 import csv
+import hashlib
+import json
 import math
 import os
 import sys
 import textwrap
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime, timezone
 
 import numpy as np
 import rasterio
@@ -83,6 +85,8 @@ def parse_args(argv=None):
                    default="truecolour",
                    help="truecolour = B4/B3/B2; swir = B12/B8A/B4 (burn scars, "
                         "sees through thin smoke); both = one of each")
+    p.add_argument("--label", default="",
+                   help="optional area name shown on the site (default: the bbox)")
     p.add_argument("--min-coverage", type=float, default=90,
                    help="min bbox coverage %% for a date to qualify (default 90)")
     p.add_argument("--score-px", type=int, default=600,
@@ -376,6 +380,62 @@ def write_png(path, rgb, bbox, row, note, composite="truecolour"):
     plt.close(fig)
 
 
+def write_web(outdir, comp, rgb):
+    """Light WebP for the site (nodata transparent) at the output size."""
+    from PIL import Image
+    alpha = np.where(rgb.any(axis=0), 255, 0).astype(np.uint8)
+    rgba = np.dstack([np.moveaxis(rgb, 0, -1), alpha])
+    Image.fromarray(rgba, "RGBA").save(
+        os.path.join(outdir, f"{comp}.webp"), quality=85, method=4)
+
+
+def write_thumb(outdir, rgb, width=480):
+    from PIL import Image
+    img = Image.fromarray(np.moveaxis(rgb, 0, -1), "RGB")
+    img.thumbnail((width, width))
+    img.save(os.path.join(outdir, "thumb.jpg"), quality=82)
+
+
+def num(x):
+    return None if x is None or (isinstance(x, float) and math.isnan(x)) else round(x, 1)
+
+
+def write_run_json(outdir, args, bbox, chosen, reason, fallback, composites,
+                   size, n_raw, n_dates):
+    stamp = os.environ.get("GITHUB_RUN_ID") or datetime.now(timezone.utc).strftime("%H%M%S")
+    area = hashlib.sha1(",".join(f"{v:g}" for v in bbox).encode()).hexdigest()[:6]
+    run_url = None
+    if os.environ.get("GITHUB_RUN_ID") and os.environ.get("GITHUB_REPOSITORY"):
+        run_url = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/"
+                   f"{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/"
+                   f"{os.environ['GITHUB_RUN_ID']}")
+    info = {
+        "id": f"{chosen['date'].replace('-', '')}-{area}-{stamp}",
+        "label": args.label.strip(),
+        "date": chosen["date"],
+        "bbox": list(bbox),
+        "tiles": chosen["tiles"],
+        "coverage": num(chosen["coverage"]),
+        "cloud_meta": num(chosen["meta_cloud"]),
+        "cloud_scl": num(chosen["scl_cloud"]),
+        "shadow_scl": num(chosen["scl_shadow"]),
+        "fallback": bool(fallback),
+        "reason": reason,
+        "composites": composites,
+        "size": list(size),
+        "scenes_found": n_raw,
+        "dates_considered": n_dates,
+        "inputs": {"start_date": args.start_date, "end_date": args.end_date,
+                   "max_cloud": args.max_cloud, "accept_cloud": args.accept_cloud,
+                   "max_px": args.max_px, "pick": args.pick,
+                   "min_coverage": args.min_coverage},
+        "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "run_url": run_url,
+    }
+    with open(os.path.join(outdir, "run.json"), "w", encoding="utf-8") as f:
+        json.dump(info, f, indent=1)
+
+
 def fmt(x):
     return "n/a" if x is None or (isinstance(x, float) and math.isnan(x)) else f"{x:.1f}"
 
@@ -432,14 +492,20 @@ def run(args):
 
     composites = (["truecolour", "swir"] if args.composite == "both"
                   else [args.composite])
-    stems = []
+    stems, rgbs = [], {}
     for comp in composites:
         rgb, transform = render(chosen, bbox, args, comp)
         stem = os.path.join(args.outdir, f"{comp}_{chosen['date']}")
         write_geotiff(stem + ".tif", rgb, transform)
         write_png(stem + ".png", rgb, bbox, chosen, note, comp)
+        write_web(args.outdir, comp, rgb)
+        rgbs[comp] = rgb
         stems.append(stem)
+    write_thumb(args.outdir, rgbs.get("truecolour", next(iter(rgbs.values()))))
     write_csv(os.path.join(args.outdir, "scenes.csv"), rows, chosen, args)
+    h, w = next(iter(rgbs.values())).shape[1:]
+    write_run_json(args.outdir, args, bbox, chosen, reason, fallback, composites,
+                   (w, h), len(raw), len(rows))
 
     lines = [
         f"## Sentinel-2 true colour: {chosen['date']}",

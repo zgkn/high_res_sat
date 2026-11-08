@@ -35,6 +35,17 @@ on:
           - truecolour
           - swir
           - both
+      label:
+        description: "Optional area name shown on the site (blank = the bbox)"
+        default: ""
+        type: string
+      publish:
+        description: "Add this run to the viewer site (branch s2-output)"
+        default: true
+        type: boolean
+
+permissions:
+  contents: write  # publish step pushes the s2-output branch
 
 jobs:
   truecolour:
@@ -59,6 +70,7 @@ jobs:
           ACCEPT_CLOUD: ${{ inputs.accept_cloud }}
           MAX_PX: ${{ inputs.max_px }}
           COMPOSITE: ${{ inputs.composite }}
+          LABEL: ${{ inputs.label }}
         run: |
           python scripts/s2_truecolour.py \
             --start-date "$START_DATE" \
@@ -68,6 +80,7 @@ jobs:
             --accept-cloud "$ACCEPT_CLOUD" \
             --max-px "$MAX_PX" \
             --composite "$COMPOSITE" \
+            --label "$LABEL" \
             --outdir output
 
       - name: Upload outputs
@@ -78,3 +91,30 @@ jobs:
           path: output/
           retention-days: 30
           if-no-files-found: warn
+
+  publish:
+    needs: truecolour
+    if: success() && inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One publisher at a time so two runs never overwrite each other's site update.
+    # Only this short job is serialised; image building runs in parallel.
+    concurrency:
+      group: s2-output
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: s2-truecolour
+          path: output
+
+      - name: Publish to the viewer site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTPUT_BRANCH: s2-output
+        run: |
+          bash scripts/publish_site.sh output
+          owner="${GITHUB_REPOSITORY%%/*}"; repo="${GITHUB_REPOSITORY#*/}"
+          echo "**Viewer:** https://${owner}.github.io/${repo}/ (needs GitHub Pages enabled on branch \`s2-output\`; allow a minute or two to update)" >> "$GITHUB_STEP_SUMMARY"

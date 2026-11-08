@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel-2 Viewer</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="assets/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="top">
+  <h1>Sentinel-2 viewer</h1>
+  <p id="subtitle">High-resolution true-colour and SWIR images from the workflow.</p>
+</header>
+
+<main class="layout">
+  <aside class="runs" aria-label="Runs">
+    <label class="filter">Area
+      <select id="areaFilter"></select>
+    </label>
+    <div id="runList"></div>
+  </aside>
+
+  <section class="viewer" aria-label="Image viewer">
+    <div class="toolbar">
+      <div class="seg" id="modeTabs" role="tablist">
+        <button type="button" role="tab" data-mode="view">View</button>
+        <button type="button" role="tab" data-mode="compare">Compare</button>
+        <button type="button" role="tab" data-mode="map">Map</button>
+      </div>
+      <div class="seg" id="prodBar" aria-label="Image type"></div>
+      <div class="cmp" id="cmpBar" hidden>
+        <label>Left <select id="selL"></select></label>
+        <label>Right <select id="selR"></select></label>
+      </div>
+      <label class="opacity" id="opBar" hidden>Opacity
+        <input type="range" id="opacity" min="0" max="100" value="85">
+      </label>
+    </div>
+
+    <div class="stagewrap">
+      <div id="stage" class="stage" tabindex="0" aria-label="Image. Scroll or pinch to zoom, drag to pan.">
+        <div class="layer" id="layerL"><div class="pz" id="pzL"><img id="imgL" alt="" draggable="false"></div></div>
+        <div class="layer" id="layerR"><div class="pz" id="pzR"><img id="imgR" alt="" draggable="false"></div></div>
+        <div class="divider" id="divider" role="slider" tabindex="0" aria-label="Comparison divider"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><span class="knob"></span></div>
+        <span class="tag tagL" id="tagL"></span>
+        <span class="tag tagR" id="tagR"></span>
+        <div class="zoom">
+          <button type="button" id="zin" aria-label="Zoom in">+</button>
+          <button type="button" id="zout" aria-label="Zoom out">&minus;</button>
+          <button type="button" id="zreset" aria-label="Fit to window">&#x2922;</button>
+        </div>
+        <div class="readout" id="readout"></div>
+        <div class="loading" id="loading">Loading&hellip;</div>
+      </div>
+      <div id="map" class="map" hidden></div>
+    </div>
+
+    <div id="info" class="info"></div>
+  </section>
+</main>
+
+<footer class="foot">
+  Contains modified Copernicus Sentinel data, processed from the
+  <a href="https://registry.opendata.aws/sentinel-2-l2a-cogs/">Sentinel-2 L2A COGs</a> via
+  <a href="https://element84.com/earth-search/">Earth Search</a>.
+  Map: &copy; OpenStreetMap contributors; imagery &copy; Esri, Maxar, Earthstar Geographics.
+</footer>
+
+<script src="data.js"></script>
+<script src="assets/vendor/leaflet/leaflet.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
