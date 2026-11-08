@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sentinel-2 true-colour image of the most recent acceptably clear date.
+"""Sentinel-2 true-colour (and optional SWIR) image of the most recent clear date.
 
 Searches Earth Search (Element 84) for Sentinel-2 L2A scenes over a bbox and
 date range, scores every acquisition date for bbox coverage and cloud, picks
@@ -12,6 +12,8 @@ Selection (--pick latest_acceptable, the default):
 If no date is acceptable it falls back to the clearest well-covered date
 (then the best-covered date) and says so loudly.
 --pick clearest ranks by lowest cloud instead of recency.
+--composite swir|both adds a B12/B8A/B4 image that shows burn scars and sees
+through thin smoke.
 
 No API key needed. Runs locally or in GitHub Actions.
 """
@@ -38,6 +40,14 @@ SCL_CLOUD = (8, 9, 10)  # medium prob, high prob, thin cirrus
 SCL_SHADOW = 3
 NATIVE_RES_M = 10.0
 M_PER_DEG = 111_320.0
+
+# SWIR composite: R=B12 (swir22), G=B8A (nir08), B=B4 (red). Fixed reflectance
+# stretch per channel so images from different dates are comparable.
+SWIR_ASSETS = ("swir22", "nir08", "red")
+SWIR_RANGE = ((0.0, 0.40), (0.0, 0.50), (0.0, 0.20))
+SWIR_GAMMA = 0.6
+SWIR_CAPTION = ("Burn scars: dark red/brown | active fire: bright orange | "
+                "vegetation: green | cloud: white | thin smoke: mostly transparent")
 
 # Keep GDAL from listing bucket directories and retry flaky range requests.
 os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
@@ -69,6 +79,10 @@ def parse_args(argv=None):
                    help="longest side of the output image (default 2500)")
     p.add_argument("--pick", choices=["latest_acceptable", "clearest"],
                    default="latest_acceptable")
+    p.add_argument("--composite", choices=["truecolour", "swir", "both"],
+                   default="truecolour",
+                   help="truecolour = B4/B3/B2; swir = B12/B8A/B4 (burn scars, "
+                        "sees through thin smoke); both = one of each")
     p.add_argument("--min-coverage", type=float, default=90,
                    help="min bbox coverage %% for a date to qualify (default 90)")
     p.add_argument("--score-px", type=int, default=600,
@@ -291,13 +305,31 @@ def select(rows, args):
 # --------------------------------------------------------------------------
 # outputs
 # --------------------------------------------------------------------------
-def render(row, bbox, args):
+def swir_item(item, bbox, w, h):
+    """B12/B8A/B4 -> 8-bit RGB; 0 stays nodata, valid pixels are >= 1."""
+    out = np.zeros((3, h, w), np.uint8)
+    valid = np.ones((h, w), bool)
+    for i, (key, (lo, hi)) in enumerate(zip(SWIR_ASSETS, SWIR_RANGE)):
+        asset = item.assets[key]
+        dn = read_item(asset.href, bbox, w, h, [1], Resampling.average)[0]
+        rb = asset.extra_fields.get("raster:bands", [{}])[0]
+        refl = dn * rb.get("scale", 1e-4) + rb.get("offset", -0.1)
+        valid &= dn > 0
+        stretch = np.clip((refl - lo) / (hi - lo), 0, 1) ** SWIR_GAMMA
+        out[i] = (1 + stretch * 254).astype(np.uint8)
+    out[:, ~valid] = 0
+    return out
+
+
+def render(row, bbox, args, composite):
     w, h, transform = make_grid(bbox, args.max_px)
-    items = row["items"]
+    if composite == "swir":
+        read = lambda it: swir_item(it, bbox, w, h)
+    else:
+        read = lambda it: read_item(it.assets["visual"].href, bbox, w, h,
+                                    [1, 2, 3], Resampling.average)
     with ThreadPoolExecutor(args.workers) as pool:
-        arrays = list(pool.map(
-            lambda it: read_item(it.assets["visual"].href, bbox, w, h,
-                                 [1, 2, 3], Resampling.average), items))
+        arrays = list(pool.map(read, row["items"]))
     return mosaic_rgb(arrays), transform
 
 
@@ -311,14 +343,16 @@ def write_geotiff(path, rgb, transform):
         dst.write(rgb)
 
 
-def write_png(path, rgb, bbox, row, note):
+def write_png(path, rgb, bbox, row, note, composite="truecolour"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     w, s, e, n = bbox
     cos_lat = math.cos(math.radians((s + n) / 2))
-    title = (f"Sentinel-2 L2A true colour - {row['date']}\n"
+    name = ("SWIR composite (B12/B8A/B4)" if composite == "swir"
+            else "true colour")
+    title = (f"Sentinel-2 L2A {name} - {row['date']}\n"
              f"Tiles: {', '.join(row['tiles'])}\n"
              f"Cloud: {row['meta_cloud']:.1f}% (scene metadata), "
              f"{row['scl_cloud']:.1f}% (SCL, in bbox)")
@@ -333,7 +367,11 @@ def write_png(path, rgb, bbox, row, note):
     ax.grid(ls=":", alpha=0.4, color="white")
     ax.set_title("\n".join(textwrap.fill(t, 95) for t in title.split("\n")),
                  fontsize=10)
-    fig.tight_layout()
+    if composite == "swir":
+        fig.text(0.5, 0.01, SWIR_CAPTION, ha="center", fontsize=8)
+        fig.tight_layout(rect=(0, 0.03, 1, 1))
+    else:
+        fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
@@ -392,10 +430,15 @@ def run(args):
     note = f"FALLBACK: {reason}" if fallback else ""
     print(f"Chosen {chosen['date']}: {reason}")
 
-    rgb, transform = render(chosen, bbox, args)
-    stem = os.path.join(args.outdir, f"truecolour_{chosen['date']}")
-    write_geotiff(stem + ".tif", rgb, transform)
-    write_png(stem + ".png", rgb, bbox, chosen, note)
+    composites = (["truecolour", "swir"] if args.composite == "both"
+                  else [args.composite])
+    stems = []
+    for comp in composites:
+        rgb, transform = render(chosen, bbox, args, comp)
+        stem = os.path.join(args.outdir, f"{comp}_{chosen['date']}")
+        write_geotiff(stem + ".tif", rgb, transform)
+        write_png(stem + ".png", rgb, bbox, chosen, note, comp)
+        stems.append(stem)
     write_csv(os.path.join(args.outdir, "scenes.csv"), rows, chosen, args)
 
     lines = [
@@ -416,14 +459,15 @@ def run(args):
         f"on {len(rows)} dates",
         f"- **Inputs:** bbox `{args.bbox}`, {args.start_date} to {args.end_date}, "
         f"max_cloud {args.max_cloud:g}, accept_cloud {args.accept_cloud:g}, "
-        f"max_px {args.max_px}, pick `{args.pick}`",
+        f"max_px {args.max_px}, pick `{args.pick}`, composite `{args.composite}`",
         "",
         "### Runner-up dates",
     ]
     lines += table(others[:5]) if others else ["None."]
     lines += ["", "### All dates considered"] + table(rows)
     write_summary(lines)
-    print(f"Wrote {stem}.png, {stem}.tif, scenes.csv in {args.outdir}/")
+    print(f"Wrote {', '.join(os.path.basename(s) + '.png/.tif' for s in stems)}, "
+          f"scenes.csv in {args.outdir}/")
 
 
 def main(argv=None):
