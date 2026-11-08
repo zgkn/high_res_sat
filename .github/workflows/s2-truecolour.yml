@@ -11,6 +11,13 @@ on:
         description: "End date (YYYY-MM-DD, inclusive)"
         required: true
         type: string
+      source:
+        description: "Satellite: sentinel-2 (10 m) or landsat (Landsat 8/9, 30 m, Planetary Computer)"
+        default: sentinel-2
+        type: choice
+        options:
+          - sentinel-2
+          - landsat
       bbox:
         description: "min_lon,min_lat,max_lon,max_lat"
         default: "114,-2,115,-1"
@@ -66,10 +73,11 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pystac-client rasterio numpy matplotlib pillow
+        run: pip install pystac-client rasterio numpy matplotlib pillow planetary-computer
 
       - name: Make true-colour image
         env:
+          SOURCE: ${{ inputs.source }}
           START_DATE: ${{ inputs.start_date }}
           END_DATE: ${{ inputs.end_date }}
           BBOX: ${{ inputs.bbox }}
@@ -81,6 +89,7 @@ jobs:
           TC_STYLE: ${{ inputs.tc_style }}
         run: |
           python scripts/s2_truecolour.py \
+            --source "$SOURCE" \
             --start-date "$START_DATE" \
             --end-date "$END_DATE" \
             --bbox "$BBOX" \

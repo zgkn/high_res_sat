@@ -2,8 +2,8 @@
 
 Sentinel-2 L2A images from a GitHub Actions workflow, plus a small website to look at them.
 
-- **Workflow** `.github/workflows/s2-truecolour.yml` ("Sentinel-2 true colour"): searches the free
-  [Earth Search](https://earth-search.aws.element84.com/v1) STAC catalogue for a bounding box and date range, scores every
+- **Workflow** `.github/workflows/s2-truecolour.yml` ("Sentinel-2 true colour"; also runs Landsat 8/9): searches the free
+  [Earth Search](https://earth-search.aws.element84.com/v1) STAC catalogue (Landsat: Microsoft's Planetary Computer) for a bounding box and date range, scores every
   acquisition date for coverage and cloud, picks one, and builds a true-colour and/or SWIR image of it.
 - **Viewer** `site/`, published to GitHub Pages from the `s2-output` branch: a gallery of runs, a zoom/pan viewer,
   a compare slider and a map overlay.
@@ -17,6 +17,7 @@ GitHub web or mobile app: **Actions** → **Sentinel-2 true colour** → **Run w
 | Input | Default | Meaning |
 |---|---|---|
 | `start_date`, `end_date` | required | `YYYY-MM-DD`, end date inclusive |
+| `source` | `sentinel-2` | `sentinel-2` (10 m, Earth Search) or `landsat` (Landsat 8/9 Collection 2 Level-2, 30 m, from Microsoft's Planetary Computer; free, anonymous). Everything else works the same: bbox, dates, cloud rules, composites, site. SWIR for Landsat is B7/B5/B4. Cloud is scored from Landsat's QA_PIXEL (cloud, dilated cloud, cirrus), shadow separately. |
 | `bbox` | `114,-2,115,-1` | `min_lon,min_lat,max_lon,max_lat` |
 | `max_cloud` | 60 | Scene-level `eo:cloud_cover` pre-filter (whole tile, %). Use ~100 to switch it off. |
 | `accept_cloud` | 20 | Max SCL cloud (%) **inside the bbox** for a date to count as acceptable |

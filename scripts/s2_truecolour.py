@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Sentinel-2 true-colour (and optional SWIR) image of the most recent clear date.
+"""Sentinel-2 (or Landsat 8/9) true-colour and optional SWIR image of the most recent clear date.
 
-Searches Earth Search (Element 84) for Sentinel-2 L2A scenes over a bbox and
+Searches Earth Search (Element 84) for Sentinel-2 L2A scenes (or, with --source landsat,
+the Planetary Computer for Landsat 8/9 Collection 2 Level-2 scenes) over a bbox and
 date range, scores every acquisition date for bbox coverage and cloud, picks
 a date, then mosaics that date's tiles into a GeoTIFF and a PNG.
 
@@ -12,7 +13,7 @@ Selection (--pick latest_acceptable, the default):
 If no date is acceptable it falls back to the clearest well-covered date
 (then the best-covered date) and says so loudly.
 --pick clearest ranks by lowest cloud instead of recency.
---composite swir|both adds a B12/B8A/B4 image that shows burn scars and sees
+--composite swir|both adds a B12/B8A/B4 (Landsat B7/B5/B4) image that shows burn scars and sees
 through thin smoke.
 
 No API key needed. Runs locally or in GitHub Actions.
@@ -38,9 +39,17 @@ from rasterio.vrt import WarpedVRT
 
 STAC_URL = "https://earth-search.aws.element84.com/v1"
 COLLECTION = "sentinel-2-l2a"
+# Landsat Collection 2 Level 2 (surface reflectance) from Microsoft's Planetary Computer. Anonymous: the
+# planetary-computer package fetches a free read token per session. The AWS copy is requester-pays.
+PC_URL = "https://planetarycomputer.microsoft.com/api/stac/v1"
+LS_COLLECTION = "landsat-c2-l2"
+LS_PLATFORMS = ("landsat-8", "landsat-9")
+LS_RES_M = 30.0
 SCL_CLOUD = (8, 9, 10)  # medium prob, high prob, thin cirrus
 SCL_SHADOW = 3
 NATIVE_RES_M = 10.0
+# Defaults when an asset carries no raster:bands scale/offset (Sentinel-2 baseline 04.00+, Landsat C2 L2).
+REFL_DEFAULT = {"sentinel-2": (1e-4, -0.1), "landsat": (2.75e-5, -0.2)}
 M_PER_DEG = 111_320.0
 
 # SWIR composite: R=B12 (swir22), G=B8A (nir08), B=B4 (red). Fixed reflectance
@@ -58,7 +67,6 @@ SWIR_CAPTION = ("Burn scars: dark red/brown | active fire: bright orange | "
 
 # Keep GDAL from listing bucket directories and retry flaky range requests.
 os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
-os.environ.setdefault("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif")
 os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "4")
 os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "2")
 os.environ.setdefault("VSI_CACHE", "TRUE")
@@ -75,6 +83,9 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--start-date", required=True, help="YYYY-MM-DD")
     p.add_argument("--end-date", required=True, help="YYYY-MM-DD (inclusive)")
+    p.add_argument("--source", choices=["sentinel-2", "landsat"], default="sentinel-2",
+                   help="sentinel-2 (10 m, Earth Search) or landsat (Landsat 8/9, 30 m, "
+                        "Planetary Computer)")
     p.add_argument("--bbox", default="114,-2,115,-1",
                    help="min_lon,min_lat,max_lon,max_lat")
     p.add_argument("--max-cloud", type=float, default=60,
@@ -88,7 +99,7 @@ def parse_args(argv=None):
                    default="latest_acceptable")
     p.add_argument("--composite", choices=["truecolour", "swir", "both"],
                    default="truecolour",
-                   help="truecolour = B4/B3/B2; swir = B12/B8A/B4 (burn scars, "
+                   help="truecolour = B4/B3/B2; swir = B12/B8A/B4 (Landsat B7/B5/B4; burn scars, "
                         "sees through thin smoke); both = one of each")
     p.add_argument("--tc-style", choices=["soft", "esa"], default="soft",
                    help="true colour tone: soft = highlights rolled off so clouds keep "
@@ -114,13 +125,13 @@ def parse_bbox(text):
     return w, s, e, n
 
 
-def make_grid(bbox, px, native=False):
-    """EPSG:4326 grid over bbox; longest side `px` (or native 10 m if native)."""
+def make_grid(bbox, px, native=False, res=NATIVE_RES_M):
+    """EPSG:4326 grid over bbox; longest side `px` (or `res` metres per pixel if native)."""
     w, s, e, n = bbox
     cos_lat = math.cos(math.radians((s + n) / 2))
     wm, hm = (e - w) * M_PER_DEG * cos_lat, (n - s) * M_PER_DEG
     if native:
-        width, height = math.ceil(wm / NATIVE_RES_M), math.ceil(hm / NATIVE_RES_M)
+        width, height = math.ceil(wm / res), math.ceil(hm / res)
     elif wm >= hm:
         width, height = px, max(1, round(px * hm / wm))
     else:
@@ -128,21 +139,43 @@ def make_grid(bbox, px, native=False):
     return width, height, from_bounds(w, s, e, n, width, height)
 
 
+def is_landsat(item):
+    return item.collection_id == LS_COLLECTION
+
+
+def item_res(item):
+    return LS_RES_M if is_landsat(item) else NATIVE_RES_M
+
+
 def tile_id(item):
+    if is_landsat(item):  # WRS-2 path/row
+        return (str(item.properties.get("landsat:wrs_path", "")) +
+                str(item.properties.get("landsat:wrs_row", ""))) or item.id
     return item.properties.get("grid:code", "").replace("MGRS-", "") or item.id
+
+
+def source_name(item):
+    return "Landsat 8/9 C2 L2" if is_landsat(item) else "Sentinel-2 L2A"
+
+
+def to_reflectance(item, asset, dn):
+    """Digital numbers -> surface reflectance using the asset's scale/offset."""
+    rb = asset.extra_fields.get("raster:bands", [{}])[0]
+    d_scale, d_offset = REFL_DEFAULT["landsat" if is_landsat(item) else "sentinel-2"]
+    return dn * rb.get("scale", d_scale) + rb.get("offset", d_offset)
 
 
 def item_date(item):
     return item.datetime.date().isoformat()  # item.datetime is UTC
 
 
-def read_item(href, bbox, out_w, out_h, bands, resampling):
+def read_item(href, bbox, out_w, out_h, bands, resampling, res=NATIVE_RES_M):
     """Read `bands` of a COG onto the bbox grid in EPSG:4326.
 
     A WarpedVRT on a native-resolution bbox grid is decimated with out_shape,
     so GDAL pulls from the COG overviews and only the bbox window.
     """
-    nw, nh, ntransform = make_grid(bbox, 0, native=True)
+    nw, nh, ntransform = make_grid(bbox, 0, native=True, res=res)
     nw, nh = max(nw, out_w), max(nh, out_h)
     ntransform = from_bounds(*bbox, nw, nh)
     with rasterio.open(href) as src, WarpedVRT(
@@ -177,13 +210,23 @@ def write_summary(lines):
 # search
 # --------------------------------------------------------------------------
 def search_items(args, bbox):
-    client = Client.open(STAC_URL)
+    landsat = args.source == "landsat"
+    if landsat:
+        import planetary_computer  # signs asset URLs with a free anonymous read token
+        client = Client.open(PC_URL, modifier=planetary_computer.sign_inplace)
+    else:
+        client = Client.open(STAC_URL)
+    collection = LS_COLLECTION if landsat else COLLECTION
+    label = "Landsat 8/9 Level-2" if landsat else "Sentinel-2 L2A"
     dt = f"{args.start_date}T00:00:00Z/{args.end_date}T23:59:59Z"
 
     def run(query):
-        return list(client.search(
-            collections=[COLLECTION], bbox=bbox, datetime=dt, query=query,
+        items = list(client.search(
+            collections=[collection], bbox=bbox, datetime=dt, query=query,
             limit=100).items())
+        if landsat:  # the collection also holds Landsat 4/5/7
+            items = [i for i in items if i.properties.get("platform") in LS_PLATFORMS]
+        return items
 
     found = run({"eo:cloud_cover": {"lte": args.max_cloud}})
     if found:
@@ -192,7 +235,7 @@ def search_items(args, bbox):
     unfiltered = run(None)
     if not unfiltered:
         raise Fail(
-            f"No Sentinel-2 L2A scenes intersect bbox {args.bbox} between "
+            f"No {label} scenes intersect bbox {args.bbox} between "
             f"{args.start_date} and {args.end_date}. The date range or bbox "
             "removed them (no cloud filter involved). Widen the date range or "
             "check the bbox order (min_lon,min_lat,max_lon,max_lat).")
@@ -205,7 +248,7 @@ def search_items(args, bbox):
 
 
 def dedupe(items):
-    """One item per (date, MGRS tile): keep the newest processing baseline."""
+    """One item per (date, tile or path/row): keep the newest processing baseline."""
     best = {}
     for it in items:
         key = (item_date(it), tile_id(it))
@@ -219,20 +262,40 @@ def dedupe(items):
 # --------------------------------------------------------------------------
 # scoring
 # --------------------------------------------------------------------------
+def landsat_classes(qa):
+    """QA_PIXEL bits -> SCL-style classes so one scorer serves both satellites.
+
+    9 = cloud (bit 3) or dilated cloud (bit 1), 10 = cirrus (bit 2), 3 = shadow (bit 4), 4 = clear.
+    """
+    cls = np.full(qa.shape, 4, np.uint8)
+    cls[(qa & (1 << 4)) != 0] = SCL_SHADOW
+    cls[(qa & (1 << 2)) != 0] = 10
+    cls[(qa & ((1 << 3) | (1 << 1))) != 0] = 9
+    return cls
+
+
 def score_item(item, bbox, grid_w, grid_h):
-    """Return (valid mask, SCL array or None) for one item on the score grid."""
+    """Return (valid mask, SCL-style class array or None) for one item on the score grid."""
+    res = item_res(item)
+    landsat = is_landsat(item)
     try:
-        rgb = read_item(item.assets["visual"].href, bbox, grid_w, grid_h,
-                        [1, 2, 3], Resampling.average)
+        if landsat:  # valid = real reflectance in the red band (0 is nodata)
+            valid = read_item(item.assets["red"].href, bbox, grid_w, grid_h,
+                              [1], Resampling.average, res)[0] > 0
+        else:
+            rgb = read_item(item.assets["visual"].href, bbox, grid_w, grid_h,
+                            [1, 2, 3], Resampling.average, res)
+            valid = rgb.any(axis=0)
     except Exception as exc:
-        print(f"  ! {item.id}: could not read visual ({exc})", file=sys.stderr)
+        print(f"  ! {item.id}: could not read image ({exc})", file=sys.stderr)
         return None, None
-    valid = rgb.any(axis=0)
     try:
-        scl = read_item(item.assets["scl"].href, bbox, grid_w, grid_h,
-                        [1], Resampling.nearest)[0]
+        key = "qa_pixel" if landsat else "scl"
+        cls = read_item(item.assets[key].href, bbox, grid_w, grid_h,
+                        [1], Resampling.nearest, res)[0]
+        scl = landsat_classes(cls) if landsat else cls
     except Exception as exc:
-        print(f"  ! {item.id}: could not read SCL ({exc})", file=sys.stderr)
+        print(f"  ! {item.id}: could not read cloud mask ({exc})", file=sys.stderr)
         scl = None
     return valid, scl
 
@@ -318,14 +381,13 @@ def select(rows, args):
 # outputs
 # --------------------------------------------------------------------------
 def swir_item(item, bbox, w, h):
-    """B12/B8A/B4 -> 8-bit RGB; 0 stays nodata, valid pixels are >= 1."""
+    """B12/B8A/B4 (Landsat B7/B5/B4) -> 8-bit RGB; 0 stays nodata, valid pixels are >= 1."""
     out = np.zeros((3, h, w), np.uint8)
     valid = np.ones((h, w), bool)
     for i, (key, (lo, hi)) in enumerate(zip(SWIR_ASSETS, SWIR_RANGE)):
         asset = item.assets[key]
-        dn = read_item(asset.href, bbox, w, h, [1], Resampling.average)[0]
-        rb = asset.extra_fields.get("raster:bands", [{}])[0]
-        refl = dn * rb.get("scale", 1e-4) + rb.get("offset", -0.1)
+        dn = read_item(asset.href, bbox, w, h, [1], Resampling.average, item_res(item))[0]
+        refl = to_reflectance(item, asset, dn)
         valid &= dn > 0
         stretch = np.clip((refl - lo) / (hi - lo), 0, 1) ** SWIR_GAMMA
         out[i] = (1 + stretch * 254).astype(np.uint8)
@@ -339,9 +401,8 @@ def truecolour_item(item, bbox, w, h):
     valid = np.ones((h, w), bool)
     for i, key in enumerate(("red", "green", "blue")):
         asset = item.assets[key]
-        dn = read_item(asset.href, bbox, w, h, [1], Resampling.average)[0]
-        rb = asset.extra_fields.get("raster:bands", [{}])[0]
-        refl = dn * rb.get("scale", 1e-4) + rb.get("offset", -0.1)
+        dn = read_item(asset.href, bbox, w, h, [1], Resampling.average, item_res(item))[0]
+        refl = to_reflectance(item, asset, dn)
         valid &= dn > 0
         t = (refl + 0.1) / 0.255  # what the ESA product encodes (0..1 = 0..255)
         over = np.maximum(t, TC_KNEE)
@@ -358,9 +419,10 @@ def render(row, bbox, args, composite):
         read = lambda it: swir_item(it, bbox, w, h)
     elif args.tc_style == "soft":
         read = lambda it: truecolour_item(it, bbox, w, h)
-    else:
-        read = lambda it: read_item(it.assets["visual"].href, bbox, w, h,
-                                    [1, 2, 3], Resampling.average)
+    else:  # "esa": the Sentinel-2 visual asset as is (Landsat has none, so it uses the soft tone)
+        read = lambda it: (truecolour_item(it, bbox, w, h) if is_landsat(it) else
+                           read_item(it.assets["visual"].href, bbox, w, h,
+                                     [1, 2, 3], Resampling.average))
     with ThreadPoolExecutor(args.workers) as pool:
         arrays = list(pool.map(read, row["items"]))
     return mosaic_rgb(arrays), transform
@@ -383,10 +445,11 @@ def write_png(path, rgb, bbox, row, note, composite="truecolour"):
 
     w, s, e, n = bbox
     cos_lat = math.cos(math.radians((s + n) / 2))
-    name = ("SWIR composite (B12/B8A/B4)" if composite == "swir"
-            else "true colour")
-    title = (f"Sentinel-2 L2A {name} - {row['date']}\n"
-             f"Tiles: {', '.join(row['tiles'])}\n"
+    landsat = is_landsat(row["items"][0])
+    bands = "B7/B5/B4" if landsat else "B12/B8A/B4"
+    name = f"SWIR composite ({bands})" if composite == "swir" else "true colour"
+    title = (f"{source_name(row['items'][0])} {name} - {row['date']}\n"
+             f"{'Path/rows' if landsat else 'Tiles'}: {', '.join(row['tiles'])}\n"
              f"Cloud: {row['meta_cloud']:.1f}% (scene metadata), "
              f"{row['scl_cloud']:.1f}% (SCL, in bbox)")
     if note:
@@ -441,6 +504,10 @@ def write_run_json(outdir, args, bbox, chosen, reason, fallback, composites,
     info = {
         "id": f"{chosen['date'].replace('-', '')}-{area}-{stamp}",
         "label": args.label.strip(),
+        "source": args.source,
+        "satellite": ("Landsat " + "/".join(sorted({
+            str(i.properties.get("platform", "")).replace("landsat-", "")
+            for i in chosen["items"]})) if args.source == "landsat" else "Sentinel-2"),
         "date": chosen["date"],
         "bbox": list(bbox),
         "tiles": chosen["tiles"],
@@ -503,7 +570,8 @@ def run(args):
     bbox = parse_bbox(args.bbox)
     os.makedirs(args.outdir, exist_ok=True)
 
-    print(f"Searching {COLLECTION}: bbox={bbox} {args.start_date}..{args.end_date} "
+    print(f"Searching {LS_COLLECTION if args.source == 'landsat' else COLLECTION}: "
+          f"bbox={bbox} {args.start_date}..{args.end_date} "
           f"eo:cloud_cover<={args.max_cloud}")
     raw = search_items(args, bbox)
     items = dedupe(raw)
@@ -537,7 +605,7 @@ def run(args):
                    (w, h), len(raw), len(rows))
 
     lines = [
-        f"## Sentinel-2 true colour: {chosen['date']}",
+        f"## {source_name(chosen['items'][0])}: {chosen['date']}",
         "",
         f"- **Chosen date:** {chosen['date']} ({reason})",
     ]
@@ -545,7 +613,7 @@ def run(args):
         lines.append(f"- :warning: **Fallback used.** Nothing met "
                      f"accept_cloud={args.accept_cloud:g}%.")
     lines += [
-        f"- **Tiles:** {', '.join(chosen['tiles'])}",
+        f"- **{'Path/rows' if is_landsat(chosen['items'][0]) else 'Tiles'}:** {', '.join(chosen['tiles'])}",
         f"- **Coverage of bbox:** {fmt(chosen['coverage'])}%",
         f"- **Cloud, scene metadata:** {fmt(chosen['meta_cloud'])}%",
         f"- **Cloud, SCL (classes 8/9/10) in bbox:** {fmt(chosen['scl_cloud'])}% "
@@ -571,7 +639,7 @@ def main(argv=None):
         run(args)
     except Fail as exc:
         print(f"::error::{exc}", file=sys.stderr)
-        write_summary(["## Sentinel-2 true colour: no image produced", "", str(exc)])
+        write_summary(["## No image produced", "", str(exc)])
         return 1
     return 0
 

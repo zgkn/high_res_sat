@@ -64,6 +64,7 @@
         "<div><div class=\"d\">" + esc(r.date) + "</div>" +
         '<div class="m">Cloud ' + pct(r.cloud_scl) + " &middot; coverage " + pct(r.coverage) + "</div>" +
         "<div>" + r.composites.map(function (c) { return '<span class="chip">' + esc(SHORT[c] || c) + "</span>"; }).join("") +
+        (r.source === "landsat" ? '<span class="chip">' + esc(r.satellite) + "</span>" : "") +
         (r.fallback ? '<span class="chip warn">Fallback</span>' : "") + "</div></div></button>";
     });
     $("#runList").innerHTML = html || '<div class="empty">No runs in this area.</div>';
@@ -125,7 +126,8 @@
       (r.fallback ? '<div class="warnbox"><b>Fallback.</b> ' + esc(r.reason) + "</div>" : "") +
       '<div class="facts">' +
       "<div><b>Area</b>" + esc(bboxTxt(r.bbox)) + "</div>" +
-      "<div><b>Tiles</b>" + esc(r.tiles.join(", ")) + "</div>" +
+      "<div><b>Satellite</b>" + esc(r.satellite || "Sentinel-2") + "</div>" +
+      "<div><b>" + (r.source === "landsat" ? "Path/rows" : "Tiles") + "</b>" + esc(r.tiles.join(", ")) + "</div>" +
       "<div><b>Coverage of area</b>" + pct(r.coverage) + "</div>" +
       "<div><b>Cloud, scene metadata</b>" + pct(r.cloud_meta) + "</div>" +
       "<div><b>Cloud, SCL in area</b>" + pct(r.cloud_scl) + "</div>" +
