@@ -112,3 +112,28 @@ select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-
 .gname { font-weight: 600; }
 .gmeta { color: var(--muted); font-size: .8rem; }
 .group > .card { margin: 8px; width: calc(100% - 16px); background: var(--card); }
+
+/* timeline */
+.timeline { margin-top: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.tl-top { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.tl-btn { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg);
+  color: var(--fg); cursor: pointer; font-size: .95rem; line-height: 1; }
+.tl-btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.tl-label { font-weight: 600; flex: 1 1 220px; min-width: 0; }
+.tl-top label { font-size: .8rem; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+.tl-track { position: relative; height: 72px; margin: 10px 8px 0; touch-action: none; cursor: pointer; outline-offset: 4px; user-select: none; }
+.tl-line { position: absolute; left: 0; right: 0; top: 34px; height: 4px; border-radius: 2px; background: var(--line); }
+.tl-dot { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #888;
+  border: 2px solid var(--card); pointer-events: none; transition: transform .1s; }
+.tl-dot.good { background: #2e9e5b; } .tl-dot.ok { background: #e0a21b; } .tl-dot.bad { background: #d4493e; } .tl-dot.na { background: #888; }
+.tl-dot.fb { box-shadow: 0 0 0 2px var(--warn-fg); }
+.tl-dot.on { transform: scale(1.4); }
+.tl-handle { position: absolute; top: 4px; width: 0; height: 60px; pointer-events: none; }
+.tl-handle::before { content: ""; position: absolute; left: -1px; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+.tl-handle::after { content: ""; position: absolute; left: -6px; top: -6px; border: 6px solid transparent; border-top-color: var(--accent); }
+.tl-ends { display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted); margin: 0 8px; }
+
+/* phones: keep the image roughly square so the timeline controls stay on screen */
+@media (max-width: 860px) {
+  .stage, .map { height: min(100vw, 62vh); min-height: 260px; }
+}

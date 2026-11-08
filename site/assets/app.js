@@ -341,6 +341,151 @@
   }
   $("#opacity").addEventListener("input", function () { if (overlay) overlay.setOpacity(this.value / 100); });
 
+  // ---------------------------------------------------------------- timeline
+  // Frames = every published run with the selected run's exact box that has the chosen image type, oldest
+  // first (all satellites unless the satellite filter is set). Scrub, step or play to watch the area change;
+  // zoom and position are kept from frame to frame.
+  var tl = { frames: [], idx: 0, cloud: 100, speed: 700, timer: null, cache: {}, down: false };
+
+  function tlClass(r) { var c = r.cloud_scl; return c == null ? "na" : c <= 20 ? "good" : c <= 40 ? "ok" : "bad"; }
+  function tlFrames() {
+    var k = areaKey(byId(S.run));
+    return RUNS.filter(function (x) {
+      return areaKey(x) === k && x.images[S.prod] && (S.sat === "all" || satKey(x) === S.sat) &&
+        (x.cloud_scl == null || x.cloud_scl <= tl.cloud);
+    }).sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return (a.generated || "") < (b.generated || "") ? -1 : 1;
+    });
+  }
+  function tlPos(i) {  // 0..1 along the true date axis (a lone frame sits in the middle)
+    var f = tl.frames, n = f.length;
+    if (n < 2) return 0.5;
+    var t0 = Date.parse(f[0].date), t1 = Date.parse(f[n - 1].date);
+    return t1 === t0 ? 0.5 : (Date.parse(f[i].date) - t0) / (t1 - t0);
+  }
+  function tlX(i) { return 2 + 96 * tlPos(i); }  // % of the track width, padded so dots stay inside
+
+  function tlDraw() {
+    var f = tl.frames, dots = "";
+    f.forEach(function (r, i) {
+      var same = 0;
+      for (var j = 0; j < i; j++) if (f[j].date === r.date) same++;   // same-day frames stack downwards
+      dots += '<span class="tl-dot ' + tlClass(r) + (r.fallback ? " fb" : "") + '" data-i="' + i +
+        '" style="left:' + tlX(i) + "%;top:" + (36 + same * 14) + 'px"></span>';
+    });
+    $("#tlDots").innerHTML = dots;
+    $("#tlStart").textContent = f.length ? f[0].date : "";
+    $("#tlEnd").textContent = f.length > 1 ? f[f.length - 1].date : "";
+    var cur = byId(S.run), others = RUNS.filter(function (x) {
+      return groupKey(x) === groupKey(cur) && areaKey(x) !== areaKey(cur);
+    }).length;
+    $("#tlNote").innerHTML = !f.length
+      ? "No images match these filters. Try a different cloud limit or satellite."
+      : f.length < 2
+        ? "Only one image for this area and box so far. Run the workflow again with the same box for more dates."
+        : f.length + " images, dot colour = cloud inside the box: green &le; 20%, amber &le; 40%, red above; a ring marks a fallback pick." +
+          (others ? " " + others + " other run" + (others === 1 ? "" : "s") + " of this area use a different box and are not on this slider." : "");
+    $("#tlPlay").disabled = $("#tlPrev").disabled = $("#tlNext").disabled = f.length < 2;
+  }
+
+  function tlUpdate() {
+    var f = tl.frames, r = f[tl.idx];
+    if (!r) { $("#tlLabel").textContent = ""; return; }
+    $("#tlHandle").style.left = tlX(tl.idx) + "%";
+    Array.prototype.forEach.call(document.querySelectorAll("#tlDots .tl-dot"), function (d) {
+      d.classList.toggle("on", +d.dataset.i === tl.idx);
+    });
+    $("#tlLabel").textContent = r.date + " · " + satLabel(r) + " · cloud " + pct(r.cloud_scl) +
+      (r.fallback ? " · fallback" : "") + "  (" + (tl.idx + 1) + "/" + f.length + ")";
+    var t = $("#tlTrack");
+    t.setAttribute("aria-valuemax", f.length - 1); t.setAttribute("aria-valuenow", tl.idx);
+    t.setAttribute("aria-valuetext", r.date + ", " + satLabel(r));
+    var tag = $("#tagL"); tag.hidden = false; $("#tagR").hidden = true;
+    tag.textContent = r.date + " · " + satLabel(r) + " · cloud " + pct(r.cloud_scl);
+  }
+
+  function tlPreload(url) {
+    if (!tl.cache[url]) { var im = new Image(); im.src = url; tl.cache[url] = im; }
+    return tl.cache[url];
+  }
+  function tlSet(i) {
+    var f = tl.frames;
+    if (!f.length) return;
+    tl.idx = clamp(i, 0, f.length - 1);
+    var r = f[tl.idx], url = r.images[S.prod], im = tlPreload(url);
+    S.run = r.id;
+    var show = function () { if (tl.frames[tl.idx] === r) imgL.src = url; };
+    if (im.complete) show(); else im.addEventListener("load", show, { once: true });
+    if (dim.w !== r.size[0] || dim.h !== r.size[1]) { dim.w = r.size[0]; dim.h = r.size[1]; layout(); }
+    geo = { bbox: r.bbox };
+    [tl.idx + 1, tl.idx - 1, tl.idx + 2].forEach(function (j) { if (f[j]) tlPreload(f[j].images[S.prod]); });
+    Array.prototype.forEach.call(document.querySelectorAll("#runList .card"), function (c) {
+      if (c.dataset.id === r.id) c.setAttribute("aria-current", "true"); else c.removeAttribute("aria-current");
+    });
+    renderInfo(); writeHash(); tlUpdate();
+  }
+
+  function tlRebuild() {   // after a change of run, product or filter: rebuild the frames, keep the nearest date
+    var curDate = Date.parse(byId(S.run).date), curId = S.run;
+    tl.frames = tlFrames();
+    tlDraw();
+    if (!tl.frames.length) { tlPlay(false); return; }
+    var best = 0, bd = Infinity;
+    tl.frames.forEach(function (r, i) {
+      var d = Math.abs(Date.parse(r.date) - curDate);
+      if (d < bd || (d === bd && r.id === curId)) { bd = d; best = i; }
+    });
+    tlSet(best);
+  }
+
+  function tlPlay(on) {
+    if (tl.timer) { clearTimeout(tl.timer); tl.timer = null; }
+    var b = $("#tlPlay");
+    b.innerHTML = on ? "&#10074;&#10074;" : "&#9654;";
+    b.setAttribute("aria-label", on ? "Pause" : "Play");
+    if (!on || tl.frames.length < 2) return;
+    tl.frames.forEach(function (r) { tlPreload(r.images[S.prod]); });   // so playback does not stall
+    (function step() {
+      tl.timer = setTimeout(function () { tlSet((tl.idx + 1) % tl.frames.length); step(); }, tl.speed);
+    })();
+  }
+
+  function tlNearest(clientX) {
+    var rect = $("#tlTrack").getBoundingClientRect(), x = (clientX - rect.left) / rect.width * 100, best = 0, bd = Infinity;
+    tl.frames.forEach(function (r, i) { var d = Math.abs(tlX(i) - x); if (d < bd) { bd = d; best = i; } });
+    return best;
+  }
+  var tlTrack = $("#tlTrack");
+  tlTrack.addEventListener("pointerdown", function (e) {
+    if (!tl.frames.length) return;
+    tl.down = true;
+    try { tlTrack.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    tlPlay(false); tlSet(tlNearest(e.clientX));
+  });
+  tlTrack.addEventListener("pointermove", function (e) {
+    if (!tl.down) return;
+    var i = tlNearest(e.clientX); if (i !== tl.idx) tlSet(i);
+  });
+  tlTrack.addEventListener("pointerup", function () { tl.down = false; });
+  tlTrack.addEventListener("pointercancel", function () { tl.down = false; });
+  tlTrack.addEventListener("keydown", function (e) {
+    var k = e.key;
+    if (k === "ArrowLeft" || k === "ArrowDown") tlSet(tl.idx - 1);
+    else if (k === "ArrowRight" || k === "ArrowUp") tlSet(tl.idx + 1);
+    else if (k === "Home") tlSet(0);
+    else if (k === "End") tlSet(tl.frames.length - 1);
+    else if (k === " ") tlPlay(!tl.timer);
+    else return;
+    if (k !== " ") tlPlay(false);
+    e.preventDefault();
+  });
+  $("#tlPlay").addEventListener("click", function () { tlPlay(!tl.timer); });
+  $("#tlPrev").addEventListener("click", function () { tlPlay(false); tlSet(tl.idx - 1); });
+  $("#tlNext").addEventListener("click", function () { tlPlay(false); tlSet(tl.idx + 1); });
+  $("#tlSpeed").addEventListener("change", function () { tl.speed = +this.value; if (tl.timer) tlPlay(true); });
+  $("#tlCloud").addEventListener("change", function () { tl.cloud = +this.value; tlPlay(false); tlRebuild(); });
+
   // ---------------------------------------------------------------- orchestration
   function defaults(r) {
     if (r.composites.indexOf(S.prod) < 0) S.prod = r.composites[0];
@@ -360,15 +505,17 @@
     var r = byId(S.run);
     defaults(r);
     renderList(); renderToolbar(); renderInfo();
-    var isMap = S.mode === "map";
-    stage.hidden = isMap; $("#map").hidden = !isMap;
+    var isMap = S.mode === "map", isTl = S.mode === "timeline";
+    stage.hidden = isMap; $("#map").hidden = !isMap; $("#timeline").hidden = !isTl;
+    if (!isTl) tlPlay(false);
     if (isMap) showMap(r);
     else if (S.mode === "compare") showStage(entry(S.left), entry(S.right));
     else showStage({ run: r, prod: S.prod }, null);
+    if (isTl) tlRebuild();
     writeHash();
   }
 
-  function selectRun(id) { S.run = id; S.open[groupKey(byId(id))] = true; resetViewSoon(); render(); }
+  function selectRun(id) { tlPlay(false); S.run = id; S.open[groupKey(byId(id))] = true; resetViewSoon(); render(); }
   function resetViewSoon() { T.k = 1; T.x = 0; T.y = 0; }
 
   $("#runList").addEventListener("click", function (e) {
@@ -376,7 +523,7 @@
     if (c) selectRun(c.dataset.id);
   });
   $("#areaFilter").addEventListener("change", function () { S.area = this.value; renderList(); });
-  $("#satFilter").addEventListener("change", function () { S.sat = this.value; renderList(); });
+  $("#satFilter").addEventListener("change", function () { S.sat = this.value; renderList(); if (S.mode === "timeline") { tlPlay(false); tlRebuild(); } });
   // <details> toggles don't bubble, so listen in the capture phase to remember which groups are open
   $("#runList").addEventListener("toggle", function (e) {
     var d = e.target; if (d.classList && d.classList.contains("group")) S.open[d.dataset.key] = d.open;
@@ -401,7 +548,7 @@
   var h = readHash();
   S.run = byId(h.run) ? h.run : RUNS[0].id;
   S.open[groupKey(byId(S.run))] = true;
-  if (/^(view|compare|map)$/.test(h.mode || "")) S.mode = h.mode;
+  if (/^(view|compare|map|timeline)$/.test(h.mode || "")) S.mode = h.mode;
   if (h.p) S.prod = h.p;
   $("#subtitle").textContent = RUNS.length + " run" + (RUNS.length === 1 ? "" : "s") +
     ", newest first. Scroll or pinch to zoom, drag to pan.";
