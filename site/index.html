@@ -29,6 +29,7 @@
         <button type="button" role="tab" data-mode="view">View</button>
         <button type="button" role="tab" data-mode="compare">Compare</button>
         <button type="button" role="tab" data-mode="map">Map</button>
+        <button type="button" role="tab" data-mode="timeline">Timeline</button>
       </div>
       <div class="seg" id="prodBar" aria-label="Image type"></div>
       <div class="cmp" id="cmpBar" hidden>
@@ -57,6 +58,34 @@
         <div class="loading" id="loading">Loading&hellip;</div>
       </div>
       <div id="map" class="map" hidden></div>
+    </div>
+
+    <div id="timeline" class="timeline" hidden>
+      <div class="tl-top">
+        <button type="button" class="tl-btn primary" id="tlPlay" aria-label="Play">&#9654;</button>
+        <button type="button" class="tl-btn" id="tlPrev" aria-label="Previous date">&#9664;</button>
+        <button type="button" class="tl-btn" id="tlNext" aria-label="Next date">&#9654;&#65038;</button>
+        <span class="tl-label" id="tlLabel"></span>
+        <label>Speed
+          <select id="tlSpeed">
+            <option value="1400">Slow</option><option value="700" selected>Medium</option><option value="300">Fast</option>
+          </select>
+        </label>
+        <label>Cloud
+          <select id="tlCloud">
+            <option value="100" selected>Any</option><option value="60">&le; 60%</option>
+            <option value="40">&le; 40%</option><option value="20">&le; 20%</option>
+          </select>
+        </label>
+      </div>
+      <div class="tl-track" id="tlTrack" tabindex="0" role="slider" aria-label="Date"
+           aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+        <div class="tl-line"></div>
+        <div id="tlDots"></div>
+        <div class="tl-handle" id="tlHandle"></div>
+      </div>
+      <div class="tl-ends"><span id="tlStart"></span><span id="tlEnd"></span></div>
+      <div class="note" id="tlNote"></div>
     </div>
 
     <div id="info" class="info"></div>
