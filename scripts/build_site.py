@@ -9,6 +9,7 @@ works on any such directory:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sys
@@ -39,11 +40,26 @@ def load_runs(root: Path) -> list[dict]:
     return runs
 
 
+def stamp_versions(root: Path) -> None:
+    """Add ?v=<content hash> to the page's own files so browsers fetch fresh copies after every rebuild.
+
+    Without it a browser (or GitHub Pages' cache) can keep serving an old app.js against the new index.html.
+    """
+    page = root / "index.html"
+    html = page.read_text(encoding="utf-8")
+    for rel in ("assets/style.css", "assets/app.js", "data.js"):
+        digest = hashlib.sha1((root / rel).read_bytes()).hexdigest()[:8]
+        for attr in ("href", "src"):
+            html = html.replace(f'{attr}="{rel}"', f'{attr}="{rel}?v={digest}"')
+    page.write_text(html, encoding="utf-8")
+
+
 def build(root: Path) -> int:
     shutil.copytree(SITE_SRC, root, dirs_exist_ok=True)
     runs = load_runs(root)
     (root / "data.js").write_text(
         "window.S2_RUNS = " + json.dumps(runs, indent=1) + ";\n", encoding="utf-8")
+    stamp_versions(root)
     (root / ".nojekyll").write_text("", encoding="utf-8")
     print(f"site built in {root}: {len(runs)} run(s)")
     return len(runs)
