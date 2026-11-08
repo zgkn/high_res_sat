@@ -27,6 +27,14 @@ on:
         description: "Longest side of the output image (px)"
         default: "2500"
         type: string
+      composite:
+        description: "Image type: truecolour, swir (burn scars, sees through thin smoke) or both"
+        default: truecolour
+        type: choice
+        options:
+          - truecolour
+          - swir
+          - both
 
 jobs:
   truecolour:
@@ -50,6 +58,7 @@ jobs:
           MAX_CLOUD: ${{ inputs.max_cloud }}
           ACCEPT_CLOUD: ${{ inputs.accept_cloud }}
           MAX_PX: ${{ inputs.max_px }}
+          COMPOSITE: ${{ inputs.composite }}
         run: |
           python scripts/s2_truecolour.py \
             --start-date "$START_DATE" \
@@ -58,6 +67,7 @@ jobs:
             --max-cloud "$MAX_CLOUD" \
             --accept-cloud "$ACCEPT_CLOUD" \
             --max-px "$MAX_PX" \
+            --composite "$COMPOSITE" \
             --outdir output
 
       - name: Upload outputs
