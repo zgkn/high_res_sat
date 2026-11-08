@@ -34,6 +34,7 @@ a { color: var(--accent); }
 .filter select { width: 100%; margin-top: 2px; }
 select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px;
   background: var(--card); color: var(--fg); max-width: 100%; }
+.satfilter { width: 100%; margin: -2px 0 8px; }
 .area { margin: 14px 0 6px; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .area:first-child { margin-top: 2px; }
 .card { display: grid; grid-template-columns: 84px 1fr; gap: 10px; width: 100%; text-align: left;
@@ -102,3 +103,12 @@ select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-
 .key { font-size: .82rem; color: var(--muted); margin-top: 8px; }
 .note { font-size: .8rem; color: var(--muted); margin-top: 8px; }
 .foot { max-width: 1400px; margin: 0 auto; padding: 0 16px 28px; color: var(--muted); font-size: .78rem; }
+
+/* area groups */
+.group { margin: 0 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.group > summary { cursor: pointer; padding: 9px 12px; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+.group > summary::-webkit-details-marker { display: none; }
+.group[open] > summary { border-bottom: 1px solid var(--line); }
+.gname { font-weight: 600; }
+.gmeta { color: var(--muted); font-size: .8rem; }
+.group > .card { margin: 8px; width: calc(100% - 16px); background: var(--card); }
