@@ -35,6 +35,14 @@ def load_runs(root: Path) -> list[dict]:
                        if (folder / f"{c}_{info['date']}.png").exists()}
         info["thumb"] = f"{rel}/thumb.jpg"
         runs.append(info)
+    # The same date, box and satellite can be published more than once (a re-run, or a series covering a
+    # date that already had a card). Show only the newest; the older folder stays on the branch, hidden.
+    newest: dict[tuple, dict] = {}
+    for r in runs:
+        key = (r["date"], tuple(round(v, 4) for v in r["bbox"]), r.get("source", "sentinel-2"))
+        if key not in newest or r.get("generated", "") > newest[key].get("generated", ""):
+            newest[key] = r
+    runs = list(newest.values())
     # newest image date first; within a date, newest run first
     runs.sort(key=lambda r: (r["date"], r.get("generated", "")), reverse=True)
     return runs

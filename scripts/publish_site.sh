@@ -26,11 +26,29 @@ else
   mkdir -p "$pub"
 fi
 
-if [ -n "$src" ]; then
-  id=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['id'])" "$src/run.json")
+add_run() {   # copy one run (or series frame) folder into runs/<id>/; optional files are skipped
+  local dir=$1 id
+  id=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['id'])" "$dir/run.json")
   mkdir -p "$pub/runs/$id"
-  cp "$src"/run.json "$src"/scenes.csv "$src"/thumb.jpg "$src"/*.webp "$src"/*.png "$pub/runs/$id/"
-  msg="Publish $id"
+  for f in run.json scenes.csv thumb.jpg; do [ -f "$dir/$f" ] && cp "$dir/$f" "$pub/runs/$id/"; done
+  cp "$dir"/*.webp "$dir"/*.png "$pub/runs/$id/" 2>/dev/null || true
+  echo "$id"
+}
+
+if [ -n "$src" ]; then
+  if [ -d "$src/series" ]; then   # series mode: one frame per date
+    n=0
+    for d in "$src"/series/*/; do
+      [ -f "$d/run.json" ] || continue
+      # the run-level scenes.csv covers the whole search, so share it with every frame
+      [ -f "$d/scenes.csv" ] || cp "$src/scenes.csv" "$d/scenes.csv" 2>/dev/null || true
+      add_run "$d" >/dev/null; n=$((n + 1))
+    done
+    msg="Publish $n series frames"
+  else
+    id=$(add_run "$src")
+    msg="Publish $id"
+  fi
 else
   [ -d "$pub/runs" ] || { echo "Nothing to rebuild: branch $branch has no runs yet." >&2; exit 1; }
   msg="Rebuild site"

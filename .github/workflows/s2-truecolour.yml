@@ -49,6 +49,10 @@ on:
         options:
           - soft
           - esa
+      series:
+        description: "Publish a frame for EVERY date with full coverage (fills the timeline); ignores accept_cloud"
+        default: false
+        type: boolean
       label:
         description: "Optional area name shown on the site (blank = the bbox)"
         default: ""
@@ -87,19 +91,23 @@ jobs:
           COMPOSITE: ${{ inputs.composite }}
           LABEL: ${{ inputs.label }}
           TC_STYLE: ${{ inputs.tc_style }}
+          SERIES: ${{ inputs.series }}
         run: |
-          python scripts/s2_truecolour.py \
-            --source "$SOURCE" \
-            --start-date "$START_DATE" \
-            --end-date "$END_DATE" \
-            --bbox "$BBOX" \
-            --max-cloud "$MAX_CLOUD" \
-            --accept-cloud "$ACCEPT_CLOUD" \
-            --max-px "$MAX_PX" \
-            --composite "$COMPOSITE" \
-            --tc-style "$TC_STYLE" \
-            --label "$LABEL" \
+          args=(
+            --source "$SOURCE"
+            --start-date "$START_DATE"
+            --end-date "$END_DATE"
+            --bbox "$BBOX"
+            --max-cloud "$MAX_CLOUD"
+            --accept-cloud "$ACCEPT_CLOUD"
+            --max-px "$MAX_PX"
+            --composite "$COMPOSITE"
+            --tc-style "$TC_STYLE"
+            --label "$LABEL"
             --outdir output
+          )
+          if [ "$SERIES" = "true" ]; then args+=(--series); fi
+          python scripts/s2_truecolour.py "${args[@]}"
 
       - name: Upload outputs
         if: always()

@@ -104,6 +104,9 @@ def parse_args(argv=None):
     p.add_argument("--tc-style", choices=["soft", "esa"], default="soft",
                    help="true colour tone: soft = highlights rolled off so clouds keep "
                         "detail (default); esa = the Sentinel-2 'visual' asset as is")
+    p.add_argument("--series", action="store_true",
+                   help="publish a frame for EVERY date with full coverage (any cloud) instead of "
+                        "picking one; frames are WebP only (no PNG/GeoTIFF) and fill the site timeline")
     p.add_argument("--label", default="",
                    help="optional area name shown on the site (default: the bbox)")
     p.add_argument("--min-coverage", type=float, default=90,
@@ -493,7 +496,7 @@ def num(x):
 
 
 def write_run_json(outdir, args, bbox, chosen, reason, fallback, composites,
-                   size, n_raw, n_dates):
+                   size, n_raw, n_dates, stable_id=False):
     stamp = os.environ.get("GITHUB_RUN_ID") or datetime.now(timezone.utc).strftime("%H%M%S")
     area = hashlib.sha1(",".join(f"{v:g}" for v in bbox).encode()).hexdigest()[:6]
     run_url = None
@@ -502,7 +505,10 @@ def write_run_json(outdir, args, bbox, chosen, reason, fallback, composites,
                    f"{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/"
                    f"{os.environ['GITHUB_RUN_ID']}")
     info = {
-        "id": f"{chosen['date'].replace('-', '')}-{area}-{stamp}",
+        # series frames get a stable id (date, box, satellite) so a re-run replaces them
+        "id": (f"{chosen['date'].replace('-', '')}-{area}-{args.source}" if stable_id
+               else f"{chosen['date'].replace('-', '')}-{area}-{stamp}"),
+        "series": bool(stable_id),
         "label": args.label.strip(),
         "source": args.source,
         "satellite": ("Landsat " + "/".join(sorted({
@@ -537,6 +543,7 @@ def fmt(x):
 
 
 def write_csv(path, rows, chosen, args):
+    picked = chosen if isinstance(chosen, (list, tuple)) else [chosen]
     with open(path, "w", newline="", encoding="utf-8") as f:
         wr = csv.writer(f)
         wr.writerow(["date", "tiles", "coverage_pct", "cloud_meta_pct",
@@ -547,7 +554,7 @@ def write_csv(path, rows, chosen, args):
             wr.writerow([r["date"], " ".join(r["tiles"]), fmt(r["coverage"]),
                          fmt(r["meta_cloud"]), fmt(r["scl_cloud"]),
                          fmt(r["scl_shadow"]), "yes" if acceptable else "no",
-                         "yes" if r is chosen else "no"])
+                         "yes" if any(r is c for c in picked) else "no"])
 
 
 def table(rows):
@@ -560,6 +567,45 @@ def table(rows):
 
 
 # --------------------------------------------------------------------------
+def run_series(args, bbox, rows, raw):
+    """One frame per date with full coverage, whatever the cloud, for the timeline."""
+    ok = sorted((r for r in rows if r["coverage"] >= args.min_coverage), key=lambda r: r["date"])
+    if not ok:
+        best = max(rows, key=lambda r: r["coverage"])
+        raise Fail(f"{len(rows)} dates were found but none covers at least {args.min_coverage:g}% of the "
+                   f"box (best: {best['date']} at {best['coverage']:.1f}%), so no frames were made. "
+                   "Use a smaller box that fits inside one tile or swath, or lower min coverage.")
+    composites = ["truecolour", "swir"] if args.composite == "both" else [args.composite]
+    for r in ok:
+        d = os.path.join(args.outdir, "series", r["date"])
+        os.makedirs(d, exist_ok=True)
+        rgbs = {}
+        for comp in composites:
+            rgb, _ = render(r, bbox, args, comp)
+            write_web(d, comp, rgb)
+            rgbs[comp] = rgb
+        write_thumb(d, rgbs.get("truecolour", next(iter(rgbs.values()))))
+        h, w = next(iter(rgbs.values())).shape[1:]
+        write_run_json(d, args, bbox, r, "series frame: every date with full coverage, any cloud",
+                       False, composites, (w, h), len(raw), len(rows), stable_id=True)
+        print(f"  frame {r['date']}: cloud {fmt(r['scl_cloud'])}% coverage {fmt(r['coverage'])}%")
+    write_csv(os.path.join(args.outdir, "scenes.csv"), rows, ok, args)
+
+    skipped = [r for r in rows if r not in ok]
+    lines = [f"## {source_name(ok[0]['items'][0])}: {len(ok)} frames",
+             "",
+             f"- **Frames published:** {len(ok)} (every date with at least {args.min_coverage:g}% coverage, any cloud)",
+             f"- **Skipped (partial coverage):** {len(skipped)}",
+             f"- **Scenes found:** {len(raw)} on {len(rows)} dates",
+             f"- **Inputs:** bbox `{args.bbox}`, {args.start_date} to {args.end_date}, composite `{args.composite}`, "
+             "series mode",
+             "", "### Frames"] + table(ok)
+    if skipped:
+        lines += ["", "### Skipped dates (box only partly covered)"] + table(skipped)
+    write_summary(lines)
+    print(f"Wrote {len(ok)} frames under {args.outdir}/series/, scenes.csv")
+
+
 def run(args):
     try:
         d0, d1 = date.fromisoformat(args.start_date), date.fromisoformat(args.end_date)
@@ -582,6 +628,9 @@ def run(args):
     if not rows:
         raise Fail(f"{len(items)} scenes matched the search, but none had readable "
                    "pixels inside the bbox (reads failed or all nodata).")
+
+    if args.series:
+        return run_series(args, bbox, rows, raw)
 
     chosen, reason, fallback, others = select(rows, args)
     note = f"FALLBACK: {reason}" if fallback else ""
@@ -610,8 +659,7 @@ def run(args):
         f"- **Chosen date:** {chosen['date']} ({reason})",
     ]
     if fallback:
-        lines.append(f"- :warning: **Fallback used.** Nothing met "
-                     f"accept_cloud={args.accept_cloud:g}%.")
+        lines.append(f"- :warning: **Fallback used.** {reason}.")
     lines += [
         f"- **{'Path/rows' if is_landsat(chosen['items'][0]) else 'Tiles'}:** {', '.join(chosen['tiles'])}",
         f"- **Coverage of bbox:** {fmt(chosen['coverage'])}%",

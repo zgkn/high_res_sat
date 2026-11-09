@@ -24,6 +24,7 @@ GitHub web or mobile app: **Actions** → **Sentinel-2 true colour** → **Run w
 | `max_px` | 2500 | Longest side of the output image |
 | `composite` | `truecolour` | `truecolour`, `swir` (B12/B8A/B4: burn scars, sees through thin smoke) or `both` |
 | `tc_style` | `soft` | True colour tone. `soft` rolls highlights off so clouds keep their texture; `esa` is the Sentinel-2 product as is, where every cloud clips to white. Land looks the same in both. |
+| `series` | off | Publish a frame for **every** date with full coverage (any cloud) over the search window, instead of picking one. Frames are WebP only (no PNG or GeoTIFF, to keep the site light) and fill the Timeline slider. `accept_cloud` is ignored; use a wide window (say a month) and `max_cloud` 100. Partly covered dates are skipped and listed in the summary. A frame's id is its date + box + satellite, so re-running replaces it. |
 | `label` | blank | Optional area name shown on the site (blank = the bbox) |
 | `publish` | on | Add the run to the viewer site |
 
@@ -37,7 +38,7 @@ job summary, on the PNG and on the site. One date only: tiles from different day
 
 ## The viewer
 
-Each run with `publish` on adds `runs/<id>/` to the `s2-output` branch and rebuilds the site
+Each run with `publish` on adds `runs/<id>/` (a series adds one per date) to the `s2-output` branch and rebuilds the site
 (`scripts/publish_site.sh`, `scripts/build_site.py`). The branch is force-pushed as one commit holding every run,
 so history never grows, but **nothing is deleted**: each run adds roughly 10-20 MB (annotated PNGs are the bulk;
 GeoTIFFs are not published, they stay in the artifact). GitHub Pages sites have a 1 GB limit, so prune old
