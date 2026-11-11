@@ -1,0 +1,3 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-10-11,49MHT 49MHU 50MKC 50MKD,100.0,100.0,100.0,0.0,no,yes
+2026-10-16,49MHT 49MHU 50MKC 50MKD,81.5,100.0,100.0,0.0,no,no

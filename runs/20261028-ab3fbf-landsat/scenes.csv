@@ -1,0 +1,3 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-10-28,102065 102066,99.6,4.0,23.8,5.8,yes,yes
+2026-10-29,101066,33.9,13.9,3.1,0.8,no,no

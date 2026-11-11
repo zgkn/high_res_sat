@@ -1,0 +1,5 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-10-31,53LRL 53MRM 54LTR 54MTS,100.0,52.7,89.8,0.0,yes,yes
+2026-11-05,53LRL 53MRM 54LTR 54MTS,100.0,13.4,5.5,0.1,yes,yes
+2026-11-07,53LRL 53MRM 54LTR 54MTS,100.0,89.5,84.1,0.0,yes,yes
+2026-11-10,53LRL 53MRM 54LTR 54MTS,100.0,44.4,66.5,0.2,yes,yes

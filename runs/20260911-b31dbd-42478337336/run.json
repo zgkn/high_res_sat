@@ -1,0 +1,45 @@
+{
+ "id": "20260911-b31dbd-42478337336",
+ "label": "2.06S 114.49E zoom-in",
+ "date": "2026-09-11",
+ "bbox": [
+  114.24,
+  -2.31,
+  114.74,
+  -1.81
+ ],
+ "tiles": [
+  "49MHT",
+  "49MHU",
+  "50MKC",
+  "50MKD"
+ ],
+ "coverage": 100.0,
+ "cloud_meta": 15.7,
+ "cloud_scl": 0.1,
+ "shadow_scl": 0.0,
+ "fallback": false,
+ "reason": "most recent date with >= 90% coverage and <= 40% SCL cloud",
+ "composites": [
+  "truecolour",
+  "swir"
+ ],
+ "size": [
+  2498,
+  2500
+ ],
+ "scenes_found": 50,
+ "dates_considered": 12,
+ "inputs": {
+  "start_date": "2026-09-01",
+  "end_date": "2026-10-16",
+  "max_cloud": 100.0,
+  "accept_cloud": 40.0,
+  "max_px": 2500,
+  "pick": "latest_acceptable",
+  "tc_style": "soft",
+  "min_coverage": 90
+ },
+ "generated": "2026-11-08T12:02:28+00:00",
+ "run_url": "https://github.com/zgkn/high_res_sat/actions/runs/42478337336"
+}
