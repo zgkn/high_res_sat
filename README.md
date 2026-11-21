@@ -49,6 +49,10 @@ GeoTIFFs are not published, they stay in the artifact). GitHub Pages sites have 
 Branch `s2-output`, folder `/ (root)` → Save. The site is then at `https://<owner>.github.io/<repo>/`.
 Pages sites are public, and on a private repository Pages needs a paid GitHub plan.
 
+**Choosing an area:** the area button above the image (and the one at the top of the list) opens a map of every area as a pin,
+coloured by how recent its newest image is (dark blue = last 3 days, paler = older, grey = over 30 days); zoom in and each
+pin becomes the exact box. Click a pin or box for a thumbnail, image count and date range, then *Open this area*.
+
 Views: **View** (zoom with wheel, pinch or +/-, drag to pan, coordinates under the cursor), **Compare** (slider between any
 two images of the same area: true colour vs SWIR, or two dates), **Map** (the image over OpenStreetMap or Esri imagery,
 with an opacity slider; accurate to a few pixels for boxes of a few degrees near the equator). The page state is in the URL
