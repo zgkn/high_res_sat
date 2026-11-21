@@ -34,12 +34,15 @@ def load_runs(root: Path) -> list[dict]:
         info["png"] = {c: f"{rel}/{c}_{info['date']}.png" for c in comps
                        if (folder / f"{c}_{info['date']}.png").exists()}
         info["thumb"] = f"{rel}/thumb.jpg"
+        if (folder / "candidates.geojson").exists():
+            info["candidates"] = f"{rel}/candidates.geojson"
         runs.append(info)
     # The same date, box and satellite can be published more than once (a re-run, or a series covering a
     # date that already had a card). Show only the newest; the older folder stays on the branch, hidden.
     newest: dict[tuple, dict] = {}
     for r in runs:
-        key = (r["date"], tuple(round(v, 4) for v in r["bbox"]), r.get("source", "sentinel-2"))
+        key = (r["date"], tuple(round(v, 4) for v in r["bbox"]), r.get("source", "sentinel-2"),
+               r.get("kind", "frame"))
         if key not in newest or r.get("generated", "") > newest[key].get("generated", ""):
             newest[key] = r
     runs = list(newest.values())

@@ -55,6 +55,10 @@ on:
         description: "Publish a frame for EVERY date with full coverage (fills the timeline); ignores accept_cloud"
         default: false
         type: boolean
+      change_date:
+        description: "Radar only, optional (YYYY-MM-DD): when something may have happened (e.g. a fire). Adds a before/after radar change map of candidate burned areas"
+        default: ""
+        type: string
       label:
         description: "Optional area name shown on the site (blank = the bbox)"
         default: ""
@@ -100,6 +104,7 @@ jobs:
           LABEL: ${{ inputs.label }}
           TC_STYLE: ${{ inputs.tc_style }}
           SERIES: ${{ inputs.series }}
+          CHANGE_DATE: ${{ inputs.change_date }}
         run: |
           args=(
             --source "$SOURCE"
@@ -115,6 +120,7 @@ jobs:
             --outdir output
           )
           if [ "$SERIES" = "true" ]; then args+=(--series); fi
+          if [ -n "$CHANGE_DATE" ]; then args+=(--change-date "$CHANGE_DATE"); fi
           # exit code 3 = valid request but no usable data for this satellite (no pass, nothing covers the box):
           # finish green with a warning so one empty satellite does not make a multi-satellite run look broken
           rc=0
