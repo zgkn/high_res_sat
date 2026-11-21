@@ -12,12 +12,13 @@ on:
         required: true
         type: string
       source:
-        description: "Satellite: sentinel-2 (10 m) or landsat (Landsat 8/9, 30 m, Planetary Computer)"
+        description: "Satellite: sentinel-2 (10 m), landsat (30 m) or sentinel-1 (radar; always series, ignores cloud settings)"
         default: sentinel-2
         type: choice
         options:
           - sentinel-2
           - landsat
+          - sentinel-1
       bbox:
         description: "min_lon,min_lat,max_lon,max_lat"
         default: "114,-2,115,-1"

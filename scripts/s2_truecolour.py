@@ -2,7 +2,8 @@
 """Sentinel-2 (or Landsat 8/9) true-colour and optional SWIR image of the most recent clear date.
 
 Searches Earth Search (Element 84) for Sentinel-2 L2A scenes (or, with --source landsat,
-the Planetary Computer for Landsat 8/9 Collection 2 Level-2 scenes) over a bbox and
+the Planetary Computer for Landsat 8/9 Collection 2 Level-2 scenes, or with --source sentinel-1
+radar passes) over a bbox and
 date range, scores every acquisition date for bbox coverage and cloud, picks
 a date, then mosaics that date's tiles into a GeoTIFF and a PNG.
 
@@ -45,6 +46,13 @@ PC_URL = "https://planetarycomputer.microsoft.com/api/stac/v1"
 LS_COLLECTION = "landsat-c2-l2"
 LS_PLATFORMS = ("landsat-8", "landsat-9")
 LS_RES_M = 30.0
+# Sentinel-1 radar, already terrain-corrected (gamma0 power, VV and VH, 10 m) on the same Planetary Computer.
+S1_COLLECTION = "sentinel-1-rtc"
+# Fixed dB stretch for the radar picture (R = VV, G = VH, B = VV - VH) so dates are comparable.
+RADAR_RANGE = ((-20.0, 0.0), (-28.0, -4.0), (0.0, 14.0))
+RADAR_SMOOTH = 3  # box filter size in pixels (power domain) to calm speckle
+RADAR_CAPTION = ("Radar (not a photo): water and flooded ground black | forest mid-tone | "
+                 "bare or cleared ground and buildings brighter | cloud and smoke invisible")
 SCL_CLOUD = (8, 9, 10)  # medium prob, high prob, thin cirrus
 SCL_SHADOW = 3
 NATIVE_RES_M = 10.0
@@ -83,8 +91,9 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--start-date", required=True, help="YYYY-MM-DD")
     p.add_argument("--end-date", required=True, help="YYYY-MM-DD (inclusive)")
-    p.add_argument("--source", choices=["sentinel-2", "landsat"], default="sentinel-2",
-                   help="sentinel-2 (10 m, Earth Search) or landsat (Landsat 8/9, 30 m, "
+    p.add_argument("--source", choices=["sentinel-2", "landsat", "sentinel-1"], default="sentinel-2",
+                   help="sentinel-2 (10 m, Earth Search), landsat (Landsat 8/9, 30 m, "
+                        "Planetary Computer) or sentinel-1 (radar, 10 m, series mode only, "
                         "Planetary Computer)")
     p.add_argument("--bbox", default="114,-2,115,-1",
                    help="min_lon,min_lat,max_lon,max_lat")
@@ -97,7 +106,7 @@ def parse_args(argv=None):
                    help="longest side of the output image (default 2500)")
     p.add_argument("--pick", choices=["latest_acceptable", "clearest"],
                    default="latest_acceptable")
-    p.add_argument("--composite", choices=["truecolour", "swir", "both"],
+    p.add_argument("--composite", choices=["truecolour", "swir", "both", "radar"],
                    default="truecolour",
                    help="truecolour = B4/B3/B2; swir = B12/B8A/B4 (Landsat B7/B5/B4; burn scars, "
                         "sees through thin smoke); both = one of each")
@@ -146,11 +155,18 @@ def is_landsat(item):
     return item.collection_id == LS_COLLECTION
 
 
+def is_s1(item):
+    return item.collection_id == S1_COLLECTION
+
+
 def item_res(item):
     return LS_RES_M if is_landsat(item) else NATIVE_RES_M
 
 
 def tile_id(item):
+    if is_s1(item):  # flight direction + relative orbit, e.g. D127: only compare passes with the same one
+        state = str(item.properties.get("sat:orbit_state", "?"))[:1].upper()
+        return f"{state}{item.properties.get('sat:relative_orbit', '')}"
     if is_landsat(item):  # WRS-2 path/row
         return (str(item.properties.get("landsat:wrs_path", "")) +
                 str(item.properties.get("landsat:wrs_row", ""))) or item.id
@@ -158,6 +174,8 @@ def tile_id(item):
 
 
 def source_name(item):
+    if is_s1(item):
+        return "Sentinel-1 radar (RTC)"
     return "Landsat 8/9 C2 L2" if is_landsat(item) else "Sentinel-2 L2A"
 
 
@@ -183,7 +201,8 @@ def read_item(href, bbox, out_w, out_h, bands, resampling, res=NATIVE_RES_M):
     ntransform = from_bounds(*bbox, nw, nh)
     with rasterio.open(href) as src, WarpedVRT(
         src, crs="EPSG:4326", transform=ntransform, width=nw, height=nh,
-        resampling=Resampling.nearest, src_nodata=0, nodata=0,
+        resampling=Resampling.nearest,
+        src_nodata=src.nodata if src.nodata is not None else 0, nodata=0,
     ) as vrt:
         return vrt.read(indexes=bands, out_shape=(len(bands), out_h, out_w),
                         resampling=resampling)
@@ -214,13 +233,15 @@ def write_summary(lines):
 # --------------------------------------------------------------------------
 def search_items(args, bbox):
     landsat = args.source == "landsat"
-    if landsat:
+    radar = args.source == "sentinel-1"
+    if landsat or radar:
         import planetary_computer  # signs asset URLs with a free anonymous read token
         client = Client.open(PC_URL, modifier=planetary_computer.sign_inplace)
     else:
         client = Client.open(STAC_URL)
-    collection = LS_COLLECTION if landsat else COLLECTION
-    label = "Landsat 8/9 Level-2" if landsat else "Sentinel-2 L2A"
+    collection = S1_COLLECTION if radar else (LS_COLLECTION if landsat else COLLECTION)
+    label = ("Sentinel-1 RTC (terrain-corrected radar)" if radar
+             else "Landsat 8/9 Level-2" if landsat else "Sentinel-2 L2A")
     dt = f"{args.start_date}T00:00:00Z/{args.end_date}T23:59:59Z"
 
     def run(query):
@@ -231,6 +252,15 @@ def search_items(args, bbox):
             items = [i for i in items if i.properties.get("platform") in LS_PLATFORMS]
         return items
 
+    if radar:
+        found = run(None)
+        if found:
+            return found
+        raise Fail(
+            f"No {label} passes intersect bbox {args.bbox} between {args.start_date} and "
+            f"{args.end_date}. Either there is no pass in the window, or the Planetary Computer's "
+            "terrain-corrected radar archive does not cover this area or these dates yet "
+            "(it can lag the satellite and may not be global). Widen the dates or try another area.")
     found = run({"eo:cloud_cover": {"lte": args.max_cloud}})
     if found:
         return found
@@ -281,6 +311,13 @@ def score_item(item, bbox, grid_w, grid_h):
     """Return (valid mask, SCL-style class array or None) for one item on the score grid."""
     res = item_res(item)
     landsat = is_landsat(item)
+    if is_s1(item):  # radar: no cloud mask; valid = real backscatter in VV
+        try:
+            vv = read_item(item.assets["vv"].href, bbox, grid_w, grid_h, [1], Resampling.average, res)[0]
+        except Exception as exc:
+            print(f"  ! {item.id}: could not read radar ({exc})", file=sys.stderr)
+            return None, None
+        return np.isfinite(vv) & (vv > 0), None
     try:
         if landsat:  # valid = real reflectance in the red band (0 is nodata)
             valid = read_item(item.assets["red"].href, bbox, grid_w, grid_h,
@@ -398,6 +435,40 @@ def swir_item(item, bbox, w, h):
     return out
 
 
+def smooth(a, valid, k):
+    """k x k box mean over valid pixels only (power domain), to calm radar speckle."""
+    if k <= 1:
+        return a
+    r = k // 2
+    pa = np.pad(np.where(valid, a, 0.0), r)
+    pn = np.pad(valid.astype(np.float32), r)
+    h, w = a.shape
+    tot = np.zeros((h, w), np.float32)
+    cnt = np.zeros((h, w), np.float32)
+    for dy in range(k):
+        for dx in range(k):
+            tot += pa[dy:dy + h, dx:dx + w]
+            cnt += pn[dy:dy + h, dx:dx + w]
+    return np.where(cnt > 0, tot / np.maximum(cnt, 1), 0.0)
+
+
+def radar_item(item, bbox, w, h):
+    """VV/VH backscatter -> 8-bit RGB (R VV, G VH, B VV-VH in dB); 0 stays nodata."""
+    res = item_res(item)
+    chan = {}
+    for key in ("vv", "vh"):
+        a = read_item(item.assets[key].href, bbox, w, h, [1], Resampling.average, res)[0]
+        chan[key] = a.astype(np.float32)
+    valid = (np.isfinite(chan["vv"]) & np.isfinite(chan["vh"]) & (chan["vv"] > 0) & (chan["vh"] > 0))
+    db = {k: 10 * np.log10(np.maximum(smooth(v, valid, RADAR_SMOOTH), 1e-6)) for k, v in chan.items()}
+    layers = (db["vv"], db["vh"], db["vv"] - db["vh"])
+    out = np.zeros((3, h, w), np.uint8)
+    for i, (layer, (lo, hi)) in enumerate(zip(layers, RADAR_RANGE)):
+        out[i] = (1 + np.clip((layer - lo) / (hi - lo), 0, 1) * 254).astype(np.uint8)
+    out[:, ~valid] = 0
+    return out
+
+
 def truecolour_item(item, bbox, w, h):
     """B4/B3/B2 -> 8-bit RGB with the ESA curve below TC_KNEE and a soft shoulder above."""
     out = np.zeros((3, h, w), np.uint8)
@@ -418,7 +489,9 @@ def truecolour_item(item, bbox, w, h):
 
 def render(row, bbox, args, composite):
     w, h, transform = make_grid(bbox, args.max_px)
-    if composite == "swir":
+    if composite == "radar":
+        read = lambda it: radar_item(it, bbox, w, h)
+    elif composite == "swir":
         read = lambda it: swir_item(it, bbox, w, h)
     elif args.tc_style == "soft":
         read = lambda it: truecolour_item(it, bbox, w, h)
@@ -511,9 +584,13 @@ def write_run_json(outdir, args, bbox, chosen, reason, fallback, composites,
         "series": bool(stable_id),
         "label": args.label.strip(),
         "source": args.source,
-        "satellite": ("Landsat " + "/".join(sorted({
-            str(i.properties.get("platform", "")).replace("landsat-", "")
-            for i in chosen["items"]})) if args.source == "landsat" else "Sentinel-2"),
+        "satellite": (
+            "Sentinel-1 " + "/".join(sorted({
+                str(i.properties.get("platform", "")).upper().replace("SENTINEL-1", "")
+                for i in chosen["items"]})) if args.source == "sentinel-1" else
+            "Landsat " + "/".join(sorted({
+                str(i.properties.get("platform", "")).replace("landsat-", "")
+                for i in chosen["items"]})) if args.source == "landsat" else "Sentinel-2"),
         "date": chosen["date"],
         "bbox": list(bbox),
         "tiles": chosen["tiles"],
@@ -558,6 +635,12 @@ def write_csv(path, rows, chosen, args):
 
 
 def table(rows):
+    if rows and is_s1(rows[0]["items"][0]):  # radar: no cloud, so show the flight direction and satellite
+        out = ["| Date | Orbit (direction+track) | Satellite | Coverage % |", "|---|---|---|---|"]
+        for r in rows:
+            sats = sorted({str(i.properties.get("platform", "?")) for i in r["items"]})
+            out.append(f"| {r['date']} | {' '.join(r['tiles'])} | {', '.join(sats)} | {fmt(r['coverage'])} |")
+        return out
     out = ["| Date | Tiles | Coverage % | Cloud % (meta) | Cloud % (SCL) |",
            "|---|---|---|---|---|"]
     for r in rows:
@@ -588,13 +671,16 @@ def run_series(args, bbox, rows, raw):
         h, w = next(iter(rgbs.values())).shape[1:]
         write_run_json(d, args, bbox, r, "series frame: every date with full coverage, any cloud",
                        False, composites, (w, h), len(raw), len(rows), stable_id=True)
-        print(f"  frame {r['date']}: cloud {fmt(r['scl_cloud'])}% coverage {fmt(r['coverage'])}%")
+        what = (f"orbit {' '.join(r['tiles'])}" if is_s1(r["items"][0])
+                else f"cloud {fmt(r['scl_cloud'])}%")
+        print(f"  frame {r['date']}: {what} coverage {fmt(r['coverage'])}%")
     write_csv(os.path.join(args.outdir, "scenes.csv"), rows, ok, args)
 
     skipped = [r for r in rows if r not in ok]
     lines = [f"## {source_name(ok[0]['items'][0])}: {len(ok)} frames",
              "",
-             f"- **Frames published:** {len(ok)} (every date with at least {args.min_coverage:g}% coverage, any cloud)",
+             f"- **Frames published:** {len(ok)} (every {'pass' if is_s1(ok[0]['items'][0]) else 'date'} with at least "
+             f"{args.min_coverage:g}% coverage{'' if is_s1(ok[0]['items'][0]) else ', any cloud'})",
              f"- **Skipped (partial coverage):** {len(skipped)}",
              f"- **Scenes found:** {len(raw)} on {len(rows)} dates",
              f"- **Inputs:** bbox `{args.bbox}`, {args.start_date} to {args.end_date}, composite `{args.composite}`, "
@@ -616,9 +702,14 @@ def run(args):
     bbox = parse_bbox(args.bbox)
     os.makedirs(args.outdir, exist_ok=True)
 
-    print(f"Searching {LS_COLLECTION if args.source == 'landsat' else COLLECTION}: "
+    print(f"Searching {S1_COLLECTION if args.source == 'sentinel-1' else LS_COLLECTION if args.source == 'landsat' else COLLECTION}: "
           f"bbox={bbox} {args.start_date}..{args.end_date} "
           f"eo:cloud_cover<={args.max_cloud}")
+    if args.source == "sentinel-1" and not args.series:
+        print("Radar has no cloud to rank by, so this runs in series mode (one frame per pass).")
+        args.series = True
+    if args.source == "sentinel-1":
+        args.composite = "radar"
     raw = search_items(args, bbox)
     items = dedupe(raw)
     print(f"{len(raw)} scenes found, {len(items)} after de-duplication; scoring...")
