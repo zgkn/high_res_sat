@@ -5,7 +5,10 @@
 
   var RUNS = (window.S2_RUNS || []).slice();
   var PRODUCT = { truecolour: "True colour", swir: "SWIR (B12/B8A/B4)" };
-  var SHORT = { truecolour: "True colour", swir: "SWIR" };
+  var SHORT = { truecolour: "True colour", swir: "SWIR", radar: "Radar" };
+  var RADAR_KEY = "Radar key (not a photo; it sees through cloud and smoke): water and flooded ground black, " +
+    "forest mid-tone, bare or cleared ground and buildings brighter. Compare only passes from the same " +
+    "orbit (same direction and track).";
   var SWIR_KEY = "SWIR key: burn scars dark red/brown, active fire bright orange, vegetation green, " +
     "cloud white, thin smoke mostly transparent.";
 
@@ -48,6 +51,9 @@
   function groupName(r) { return r.label ? r.label.trim() : bboxTxt(r.bbox); }
   function satKey(r) { return r.source || "sentinel-2"; }
   function satLabel(r) { return r.satellite || "Sentinel-2"; }
+  function cloudTxt(r) {   // radar has no cloud; show its orbit instead
+    return r.source === "sentinel-1" ? "radar, orbit " + r.tiles.join("/") : "cloud " + pct(r.cloud_scl);
+  }
   function unique(a) { return a.filter(function (v, i) { return a.indexOf(v) === i; }); }
 
   function renderList() {
@@ -64,7 +70,7 @@
     if (!groups[S.area]) S.area = "all";
     sel.value = S.area;
 
-    var sats = unique(RUNS.map(satKey)), satNames = { "sentinel-2": "Sentinel-2", "landsat": "Landsat 8/9" };
+    var sats = unique(RUNS.map(satKey)), satNames = { "sentinel-2": "Sentinel-2", "landsat": "Landsat 8/9", "sentinel-1": "Sentinel-1 radar" };
     var ss = $("#satFilter");
     ss.hidden = sats.length < 2;
     ss.innerHTML = '<option value="all">All satellites</option>' + sats.map(function (k) {
@@ -90,7 +96,7 @@
           (r.id === S.run ? ' aria-current="true"' : "") + ">" +
           '<img loading="lazy" alt="" src="' + esc(r.thumb) + '">' +
           '<div><div class="d">' + esc(r.date) + "</div>" +
-          '<div class="m">' + esc(satLabel(r)) + " &middot; cloud " + pct(r.cloud_scl) + " &middot; coverage " + pct(r.coverage) + "</div>" +
+          '<div class="m">' + esc(satLabel(r)) + " &middot; " + esc(cloudTxt(r)) + " &middot; coverage " + pct(r.coverage) + "</div>" +
           "<div>" + r.composites.map(function (c) { return '<span class="chip">' + esc(SHORT[c] || c) + "</span>"; }).join("") +
           (r.fallback ? '<span class="chip warn">Fallback</span>' : "") + "</div></div></button>";
       });
@@ -177,27 +183,31 @@
         esc(SHORT[c]) + " WebP</a>");
     });
     if (r.run_url) links.push('<a href="' + esc(r.run_url) + '" target="_blank" rel="noopener">Workflow run (GeoTIFF in artifacts, 30 days)</a>');
-    var usesSwir = S.mode === "compare"
-      ? [S.left, S.right].some(function (k) { return /\|swir$/.test(k || ""); })
-      : S.prod === "swir";
+    var shown = S.mode === "compare" ? [S.left, S.right] : [r.id + "|" + S.prod];
+    var usesSwir = shown.some(function (k) { return /\|swir$/.test(k || ""); });
+    var usesRadar = shown.some(function (k) { return /\|radar$/.test(k || ""); });
+    var isRadar = r.source === "sentinel-1";
     $("#info").innerHTML =
       "<h2>" + esc(areaName(r)) + " &middot; " + esc(r.date) + "</h2>" +
       (r.fallback ? '<div class="warnbox"><b>Fallback.</b> ' + esc(r.reason) + "</div>" : "") +
       '<div class="facts">' +
       "<div><b>Area</b>" + esc(bboxTxt(r.bbox)) + "</div>" +
       "<div><b>Satellite</b>" + esc(r.satellite || "Sentinel-2") + "</div>" +
-      "<div><b>" + (r.source === "landsat" ? "Path/rows" : "Tiles") + "</b>" + esc(r.tiles.join(", ")) + "</div>" +
+      "<div><b>" + (isRadar ? "Orbit (direction + track)" : r.source === "landsat" ? "Path/rows" : "Tiles") + "</b>" +
+      esc(r.tiles.join(", ")) + "</div>" +
       "<div><b>Coverage of area</b>" + pct(r.coverage) + "</div>" +
-      "<div><b>Cloud, scene metadata</b>" + pct(r.cloud_meta) + "</div>" +
-      "<div><b>Cloud, SCL in area</b>" + pct(r.cloud_scl) + "</div>" +
-      "<div><b>Cloud shadow, SCL</b>" + pct(r.shadow_scl) + "</div>" +
+      (isRadar ? "" :
+        "<div><b>Cloud, scene metadata</b>" + pct(r.cloud_meta) + "</div>" +
+        "<div><b>Cloud, SCL in area</b>" + pct(r.cloud_scl) + "</div>" +
+        "<div><b>Cloud shadow, SCL</b>" + pct(r.shadow_scl) + "</div>") +
       "<div><b>Image size</b>" + r.size[0] + " &times; " + r.size[1] + " px</div>" +
       "<div><b>Search</b>" + esc(r.inputs.start_date) + " to " + esc(r.inputs.end_date) + ", " +
       r.scenes_found + " scene" + (r.scenes_found === 1 ? "" : "s") + " on " + r.dates_considered +
       " date" + (r.dates_considered === 1 ? "" : "s") + "</div></div>" +
       '<div class="links">' + links.join("") + "</div>" +
       (usesSwir ? '<div class="key">' + esc(SWIR_KEY) + "</div>" : "") +
-      '<div class="note">SCL cloud can mislabel haze, smoke or bright bare ground, so check the picture.</div>';
+      (usesRadar ? '<div class="key">' + esc(RADAR_KEY) + "</div>" : "") +
+      (isRadar ? "" : '<div class="note">SCL cloud can mislabel haze, smoke or bright bare ground, so check the picture.</div>');
   }
 
   // ---------------------------------------------------------------- pan/zoom stage
@@ -438,13 +448,13 @@
     Array.prototype.forEach.call(document.querySelectorAll("#tlDots .tl-dot"), function (d) {
       d.classList.toggle("on", +d.dataset.i === tl.idx);
     });
-    $("#tlLabel").textContent = r.date + " · " + satLabel(r) + " · cloud " + pct(r.cloud_scl) +
+    $("#tlLabel").textContent = r.date + " · " + satLabel(r) + " · " + cloudTxt(r) +
       (r.fallback ? " · fallback" : "") + "  (" + (tl.idx + 1) + "/" + f.length + ")";
     var t = $("#tlTrack");
     t.setAttribute("aria-valuemax", f.length - 1); t.setAttribute("aria-valuenow", tl.idx);
     t.setAttribute("aria-valuetext", r.date + ", " + satLabel(r));
     var tag = $("#tagL"); tag.hidden = false; $("#tagR").hidden = true;
-    tag.textContent = r.date + " · " + satLabel(r) + " · cloud " + pct(r.cloud_scl);
+    tag.textContent = r.date + " · " + satLabel(r) + " · " + cloudTxt(r);
   }
 
   function tlPreload(url) {
