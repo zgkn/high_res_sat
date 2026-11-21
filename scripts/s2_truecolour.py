@@ -87,6 +87,14 @@ class Fail(Exception):
     """Clear, user-facing failure."""
 
 
+class NoData(Fail):
+    """Valid request, but nothing usable exists (no pass, all cloudy, partial coverage).
+
+    main() returns 3 for this, so the workflow can finish green with a warning when one
+    satellite of an "all satellites" run simply has no data.
+    """
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--start-date", required=True, help="YYYY-MM-DD")
@@ -256,7 +264,7 @@ def search_items(args, bbox):
         found = run(None)
         if found:
             return found
-        raise Fail(
+        raise NoData(
             f"No {label} passes intersect bbox {args.bbox} between {args.start_date} and "
             f"{args.end_date}. Either there is no pass in the window, or the Planetary Computer's "
             "terrain-corrected radar archive does not cover this area or these dates yet "
@@ -267,13 +275,13 @@ def search_items(args, bbox):
     # Zero hits: work out which filter removed everything.
     unfiltered = run(None)
     if not unfiltered:
-        raise Fail(
+        raise NoData(
             f"No {label} scenes intersect bbox {args.bbox} between "
             f"{args.start_date} and {args.end_date}. The date range or bbox "
             "removed them (no cloud filter involved). Widen the date range or "
             "check the bbox order (min_lon,min_lat,max_lon,max_lat).")
     clouds = [i.properties.get("eo:cloud_cover", 100) for i in unfiltered]
-    raise Fail(
+    raise NoData(
         f"{len(unfiltered)} scenes exist for this bbox/date range, but all were "
         f"removed by the max_cloud filter (eo:cloud_cover <= {args.max_cloud}%). "
         f"Their cloud cover ranges {min(clouds):.0f}-{max(clouds):.0f}%. "
@@ -655,7 +663,7 @@ def run_series(args, bbox, rows, raw):
     ok = sorted((r for r in rows if r["coverage"] >= args.min_coverage), key=lambda r: r["date"])
     if not ok:
         best = max(rows, key=lambda r: r["coverage"])
-        raise Fail(f"{len(rows)} dates were found but none covers at least {args.min_coverage:g}% of the "
+        raise NoData(f"{len(rows)} dates were found but none covers at least {args.min_coverage:g}% of the "
                    f"box (best: {best['date']} at {best['coverage']:.1f}%), so no frames were made. "
                    "Use a smaller box that fits inside one tile or swath, or lower min coverage.")
     composites = ["truecolour", "swir"] if args.composite == "both" else [args.composite]
@@ -717,7 +725,7 @@ def run(args):
     rows = score_dates(items, bbox, args)
     rows = [r for r in rows if r["coverage"] > 0]
     if not rows:
-        raise Fail(f"{len(items)} scenes matched the search, but none had readable "
+        raise NoData(f"{len(items)} scenes matched the search, but none had readable "
                    "pixels inside the bbox (reads failed or all nodata).")
 
     if args.series:
@@ -776,9 +784,13 @@ def main(argv=None):
     args = parse_args(argv)
     try:
         run(args)
+    except NoData as exc:
+        print(f"::warning::{exc}", file=sys.stderr)
+        write_summary([f"## No image produced ({args.source})", "", str(exc)])
+        return 3
     except Fail as exc:
         print(f"::error::{exc}", file=sys.stderr)
-        write_summary(["## No image produced", "", str(exc)])
+        write_summary([f"## No image produced ({args.source})", "", str(exc)])
         return 1
     return 0
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Add one run's output to the viewer site branch and republish it.
 #
-#   scripts/publish_site.sh <run output dir>   add a run, rebuild and publish the site
+#   scripts/publish_site.sh <run output dir>...  add one or more runs, rebuild and publish the site
 #   scripts/publish_site.sh                    only rebuild the site (new page code, no new run)
 #
 # Reads the existing output branch (if any), adds runs/<id>/ from the run output dir, rebuilds the
@@ -11,7 +11,7 @@
 # stay in the workflow artifact.
 set -euo pipefail
 
-src=${1:-}
+srcs=("$@")
 branch=${OUTPUT_BRANCH:-s2-output}
 remote=${REMOTE_URL:-https://x-access-token:${GH_TOKEN:-}@github.com/${GITHUB_REPOSITORY:-}.git}
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -31,24 +31,26 @@ add_run() {   # copy one run (or series frame) folder into runs/<id>/; optional 
   id=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['id'])" "$dir/run.json")
   mkdir -p "$pub/runs/$id"
   for f in run.json scenes.csv thumb.jpg; do [ -f "$dir/$f" ] && cp "$dir/$f" "$pub/runs/$id/"; done
-  cp "$dir"/*.webp "$dir"/*.png "$pub/runs/$id/" 2>/dev/null || true
+  cp "$dir"/*.webp "$dir"/*.png "$dir"/*.geojson "$pub/runs/$id/" 2>/dev/null || true
   echo "$id"
 }
 
-if [ -n "$src" ]; then
-  if [ -d "$src/series" ]; then   # series mode: one frame per date
-    n=0
-    for d in "$src"/series/*/; do
-      [ -f "$d/run.json" ] || continue
-      # the run-level scenes.csv covers the whole search, so share it with every frame
-      [ -f "$d/scenes.csv" ] || cp "$src/scenes.csv" "$d/scenes.csv" 2>/dev/null || true
-      add_run "$d" >/dev/null; n=$((n + 1))
-    done
-    msg="Publish $n series frames"
-  else
-    id=$(add_run "$src")
-    msg="Publish $id"
-  fi
+if [ "${#srcs[@]}" -gt 0 ]; then
+  n=0
+  for src in "${srcs[@]}"; do
+    if [ -d "$src/series" ]; then   # series mode: one frame per date
+      for d in "$src"/series/*/; do
+        [ -f "$d/run.json" ] || continue
+        # the run-level scenes.csv covers the whole search, so share it with every frame
+        [ -f "$d/scenes.csv" ] || cp "$src/scenes.csv" "$d/scenes.csv" 2>/dev/null || true
+        add_run "$d" >/dev/null; n=$((n + 1))
+      done
+    elif [ -f "$src/run.json" ]; then
+      add_run "$src" >/dev/null; n=$((n + 1))
+    fi
+  done
+  [ "$n" -gt 0 ] || { echo "Nothing to publish: no run.json found in: ${srcs[*]}" >&2; exit 0; }
+  msg="Publish $n run(s)"
 else
   [ -d "$pub/runs" ] || { echo "Nothing to rebuild: branch $branch has no runs yet." >&2; exit 1; }
   msg="Rebuild site"
