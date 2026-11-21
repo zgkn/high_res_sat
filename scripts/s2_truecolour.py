@@ -29,7 +29,7 @@ import sys
 import textwrap
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import rasterio
@@ -37,6 +37,8 @@ from pystac_client import Client
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
 from rasterio.vrt import WarpedVRT
+
+import radar_change
 
 STAC_URL = "https://earth-search.aws.element84.com/v1"
 COLLECTION = "sentinel-2-l2a"
@@ -124,6 +126,12 @@ def parse_args(argv=None):
     p.add_argument("--series", action="store_true",
                    help="publish a frame for EVERY date with full coverage (any cloud) instead of "
                         "picking one; frames are WebP only (no PNG/GeoTIFF) and fill the site timeline")
+    p.add_argument("--change-date", default="",
+                   help="radar only (YYYY-MM-DD): when something may have happened (e.g. a fire). Builds a "
+                        "before/after change map of candidate burned areas, using several earlier passes of "
+                        "one orbit against the first pass on or after this date, instead of the plain frames")
+    p.add_argument("--min-patch-ha", type=float, default=0.5,
+                   help="change map: ignore flagged patches smaller than this many hectares (default 0.5)")
     p.add_argument("--label", default="",
                    help="optional area name shown on the site (default: the bbox)")
     p.add_argument("--min-coverage", type=float, default=90,
@@ -460,15 +468,33 @@ def smooth(a, valid, k):
     return np.where(cnt > 0, tot / np.maximum(cnt, 1), 0.0)
 
 
-def radar_item(item, bbox, w, h):
-    """VV/VH backscatter -> 8-bit RGB (R VV, G VH, B VV-VH in dB); 0 stays nodata."""
+def read_radar(item, bbox, w, h):
+    """One radar slice on the output grid: speckle-smoothed linear VV and VH power, and a validity mask."""
     res = item_res(item)
     chan = {}
     for key in ("vv", "vh"):
         a = read_item(item.assets[key].href, bbox, w, h, [1], Resampling.average, res)[0]
         chan[key] = a.astype(np.float32)
     valid = (np.isfinite(chan["vv"]) & np.isfinite(chan["vh"]) & (chan["vv"] > 0) & (chan["vh"] > 0))
-    db = {k: 10 * np.log10(np.maximum(smooth(v, valid, RADAR_SMOOTH), 1e-6)) for k, v in chan.items()}
+    return (smooth(chan["vv"], valid, RADAR_SMOOTH), smooth(chan["vh"], valid, RADAR_SMOOTH), valid)
+
+
+def radar_date(row, bbox, w, h, workers=6):
+    """All slices of one pass date merged (first valid pixel wins): linear VV, VH and validity."""
+    with ThreadPoolExecutor(workers) as pool:
+        parts = list(pool.map(lambda it: read_radar(it, bbox, w, h), row["items"]))
+    vv, vh, valid = (np.zeros((h, w), np.float32), np.zeros((h, w), np.float32), np.zeros((h, w), bool))
+    for pv, ph, ok in parts:
+        take = ok & ~valid
+        vv[take], vh[take] = pv[take], ph[take]
+        valid |= ok
+    return vv, vh, valid
+
+
+def radar_item(item, bbox, w, h):
+    """VV/VH backscatter -> 8-bit RGB (R VV, G VH, B VV-VH in dB); 0 stays nodata."""
+    vv, vh, valid = read_radar(item, bbox, w, h)
+    db = {"vv": 10 * np.log10(np.maximum(vv, 1e-6)), "vh": 10 * np.log10(np.maximum(vh, 1e-6))}
     layers = (db["vv"], db["vh"], db["vv"] - db["vh"])
     out = np.zeros((3, h, w), np.uint8)
     for i, (layer, (lo, hi)) in enumerate(zip(layers, RADAR_RANGE)):
@@ -577,7 +603,7 @@ def num(x):
 
 
 def write_run_json(outdir, args, bbox, chosen, reason, fallback, composites,
-                   size, n_raw, n_dates, stable_id=False):
+                   size, n_raw, n_dates, stable_id=False, run_id=None, extra=None):
     stamp = os.environ.get("GITHUB_RUN_ID") or datetime.now(timezone.utc).strftime("%H%M%S")
     area = hashlib.sha1(",".join(f"{v:g}" for v in bbox).encode()).hexdigest()[:6]
     run_url = None
@@ -587,8 +613,8 @@ def write_run_json(outdir, args, bbox, chosen, reason, fallback, composites,
                    f"{os.environ['GITHUB_RUN_ID']}")
     info = {
         # series frames get a stable id (date, box, satellite) so a re-run replaces them
-        "id": (f"{chosen['date'].replace('-', '')}-{area}-{args.source}" if stable_id
-               else f"{chosen['date'].replace('-', '')}-{area}-{stamp}"),
+        "id": (run_id or (f"{chosen['date'].replace('-', '')}-{area}-{args.source}" if stable_id
+                          else f"{chosen['date'].replace('-', '')}-{area}-{stamp}")),
         "series": bool(stable_id),
         "label": args.label.strip(),
         "source": args.source,
@@ -619,6 +645,8 @@ def write_run_json(outdir, args, bbox, chosen, reason, fallback, composites,
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "run_url": run_url,
     }
+    if extra:
+        info.update(extra)
     with open(os.path.join(outdir, "run.json"), "w", encoding="utf-8") as f:
         json.dump(info, f, indent=1)
 
@@ -700,6 +728,104 @@ def run_series(args, bbox, rows, raw):
     print(f"Wrote {len(ok)} frames under {args.outdir}/series/, scenes.csv")
 
 
+def pick_change_passes(rows, change_date, min_coverage, max_before=4):
+    """Choose one orbit: up to `max_before` full-coverage passes before the date, the first one on/after it."""
+    by_orbit = defaultdict(list)
+    for r in rows:
+        if r["coverage"] >= min_coverage and len(r["tiles"]) == 1:
+            by_orbit[r["tiles"][0]].append(r)
+    best, listing = None, []
+    for orbit, rs in sorted(by_orbit.items()):
+        rs.sort(key=lambda r: r["date"])
+        before = [r for r in rs if r["date"] < change_date]
+        after = [r for r in rs if r["date"] >= change_date]
+        listing.append(f"{orbit}: {len(before)} before ({', '.join(r['date'] for r in before) or '-'}), "
+                       f"{len(after)} after ({', '.join(r['date'] for r in after) or '-'})")
+        if len(before) >= 2 and after:
+            key = (min(len(before), max_before), -date.fromisoformat(after[0]["date"]).toordinal(),
+                   before[-1]["date"])
+            if best is None or key > best[0]:
+                best = (key, orbit, before[-max_before:], after[0])
+    if best is None:
+        raise NoData(
+            f"Cannot build a change map around {change_date}: it needs one orbit with at least 2 earlier passes "
+            f"and 1 pass on or after that date, each covering the whole box. Passes by orbit: "
+            + ("; ".join(listing) if listing else "none cover the box") + ". "
+            "Try a smaller box that fits inside one radar swath, or a later change date (the radar "
+            "archive can lag a few days behind the satellite).")
+    return best[1], best[2], best[3]
+
+
+def run_change(args, bbox, rows, raw):
+    """Before/after radar change map around --change-date: coloured image, outlines and GeoJSON."""
+    orbit, before, after = pick_change_passes(rows, args.change_date, args.min_coverage)
+    print(f"Change map: orbit {orbit}, before {[r['date'] for r in before]}, after {after['date']}")
+    w, h, transform = make_grid(bbox, args.max_px)
+    wm = (bbox[2] - bbox[0]) * M_PER_DEG * math.cos(math.radians((bbox[1] + bbox[3]) / 2))
+    hm = (bbox[3] - bbox[1]) * M_PER_DEG
+    px_ha = (wm / w) * (hm / h) / 1e4
+
+    use = before + [after]
+    with ThreadPoolExecutor(2) as pool:   # each radar_date already reads slices in parallel
+        data = list(pool.map(lambda r: radar_date(r, bbox, w, h, args.workers), use))
+    b_vh = [d[1] for d in data[:-1]]
+    b_ok = [d[2] for d in data[:-1]]
+    a_vv, a_vh, a_ok = data[-1]
+    res = radar_change.detect(b_vh, a_vh, b_ok, a_ok, px_ha, transform, args.min_patch_ha)
+    st = res["stats"]
+    if st["valid_ha"] == 0:
+        raise NoData("The chosen passes share no valid radar pixels inside the box.")
+
+    grey = radar_change.base_grey(radar_change.to_db(a_vv), res["valid"])
+    images = {"radarchange": radar_change.change_image(grey, res),
+              "radaroutline": radar_change.outline_image(grey, res)}
+    for rgb in images.values():   # outside the shared valid area: transparent
+        rgb[:, ~res["valid"]] = 0
+
+    area = hashlib.sha1(",".join(f"{v:g}" for v in bbox).encode()).hexdigest()[:6]
+    rid = f"change-{after['date'].replace('-', '')}-{area}-{orbit}"
+    d = os.path.join(args.outdir, "series", rid)
+    os.makedirs(d, exist_ok=True)
+    for comp, rgb in images.items():
+        write_web(d, comp, rgb)
+    write_thumb(d, images["radarchange"])
+    gj = radar_change.candidates_geojson(res["patches"])
+    with open(os.path.join(d, "candidates.geojson"), "w", encoding="utf-8") as f:
+        json.dump(gj, f, separators=(",", ":"))
+    change = {"orbit": orbit, "change_date": args.change_date,
+              "before_dates": [r["date"] for r in before], "after_date": after["date"],
+              "threshold_db": {"min": radar_change.MIN_DROP_DB, "std_mult": radar_change.STD_MULT,
+                               "scene_sigmas": radar_change.SCENE_SIGMAS,
+                               "median_used": st["median_threshold_db"],
+                               "scene_shift": st["scene_shift_db"], "scene_noise": st["scene_noise_db"]},
+              "flagged_ha": st["flagged_ha"], "flagged_pct": st["flagged_pct"],
+              "increase_ha": st["increase_ha"], "patches": st["patches"],
+              "patches_shown": gj["metadata"]["shown"], "min_patch_ha": st["min_patch_ha"],
+              "valid_ha": st["valid_ha"]}
+    reason = (f"Radar change: mean of {len(before)} earlier {orbit} passes vs {after['date']}; "
+              f"VH fell by more than normal wobble")
+    write_run_json(d, args, bbox, after, reason, False, list(images), (w, h), len(raw), len(rows),
+                   stable_id=True, run_id=rid, extra={"kind": "change", "change": change})
+    write_csv(os.path.join(args.outdir, "scenes.csv"), rows, use, args)
+    print(f"  flagged {st['flagged_ha']} ha ({st['flagged_pct']}% of the box), {st['patches']} patches")
+
+    lines = [f"## Radar change map: {after['date']} vs {len(before)} earlier passes (orbit {orbit})", "",
+             f"- **Change date asked:** {args.change_date}",
+             f"- **Before (normal picture):** {', '.join(r['date'] for r in before)}",
+             f"- **After:** {after['date']}",
+             f"- **Candidate burned area (sensitive setting):** {st['flagged_ha']:,.1f} ha = {st['flagged_pct']}% of the "
+             f"box, in {st['patches']} patches (each at least {st['min_patch_ha']:g} ha)",
+             f"- **Radar brighter than before (not flagged):** {st['increase_ha']:,.1f} ha",
+             f"- **Rule:** VH fell by more than max({radar_change.MIN_DROP_DB} dB, {radar_change.STD_MULT} x the "
+             f"pixel's normal pass-to-pass wobble, {radar_change.SCENE_SIGMAS:g} x the scene noise); open water excluded",
+             f"- **Scene check:** overall shift between passes {st['scene_shift_db']:+.2f} dB (removed), "
+             f"scene noise {st['scene_noise_db']:.2f} dB, typical threshold used {st['median_threshold_db']} dB",
+             "- :warning: **Candidates only.** Clearing, harvest, flooding and wet-soil changes also lower VH; "
+             "confirm against SWIR/optical images.",
+             "", "### Passes used"] + table(use)
+    write_summary(lines)
+
+
 def run(args):
     try:
         d0, d1 = date.fromisoformat(args.start_date), date.fromisoformat(args.end_date)
@@ -709,6 +835,21 @@ def run(args):
         raise Fail(f"start_date {args.start_date} is after end_date {args.end_date}")
     bbox = parse_bbox(args.bbox)
     os.makedirs(args.outdir, exist_ok=True)
+
+    change = bool(args.change_date) and args.source == "sentinel-1"
+    if args.change_date and not change:
+        print(f"Note: change date is only used for radar; ignored for {args.source}.")
+    if change:
+        try:
+            cd = date.fromisoformat(args.change_date)
+        except ValueError:
+            raise Fail("change_date must be YYYY-MM-DD")
+        # a normal picture needs several earlier passes (12-day repeat) and one clean pass after the event
+        lo, hi = min(d0, cd - timedelta(days=70)), max(d1, cd + timedelta(days=30))
+        if (lo, hi) != (d0, d1):
+            print(f"Change map: widening the radar search to {lo}..{hi} "
+                  "(about 70 days before and 30 after the change date).")
+        args.start_date, args.end_date = lo.isoformat(), hi.isoformat()
 
     print(f"Searching {S1_COLLECTION if args.source == 'sentinel-1' else LS_COLLECTION if args.source == 'landsat' else COLLECTION}: "
           f"bbox={bbox} {args.start_date}..{args.end_date} "
@@ -728,6 +869,8 @@ def run(args):
         raise NoData(f"{len(items)} scenes matched the search, but none had readable "
                    "pixels inside the bbox (reads failed or all nodata).")
 
+    if change:
+        return run_change(args, bbox, rows, raw)
     if args.series:
         return run_series(args, bbox, rows, raw)
 

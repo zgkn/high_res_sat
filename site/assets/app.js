@@ -5,10 +5,13 @@
 
   var RUNS = (window.S2_RUNS || []).slice();
   var PRODUCT = { truecolour: "True colour", swir: "SWIR (B12/B8A/B4)" };
-  var SHORT = { truecolour: "True colour", swir: "SWIR", radar: "Radar" };
+  var SHORT = { truecolour: "True colour", swir: "SWIR", radar: "Radar", radarchange: "Radar change", radaroutline: "Radar outlines" };
   var RADAR_KEY = "Radar key (not a photo; it sees through cloud and smoke): water and flooded ground black, " +
     "forest mid-tone, bare or cleared ground and buildings brighter. Compare only passes from the same " +
     "orbit (same direction and track).";
+  var CHANGE_KEY = "Radar change key (candidates only): red/orange = the radar echo fell compared with the earlier " +
+    "passes of the same orbit, which is what burning (and also clearing, harvest or flooding) does; blue = it rose; " +
+    "grey = no clear change. Outlines mark the flagged patches. Confirm with SWIR or a ground report.";
   var SWIR_KEY = "SWIR key: burn scars dark red/brown, active fire bright orange, vegetation green, " +
     "cloud white, thin smoke mostly transparent.";
 
@@ -52,6 +55,7 @@
   function satKey(r) { return r.source || "sentinel-2"; }
   function satLabel(r) { return r.satellite || "Sentinel-2"; }
   function cloudTxt(r) {   // radar has no cloud; show its orbit instead
+    if (r.kind === "change" && r.change) return "change map, orbit " + r.change.orbit;
     return r.source === "sentinel-1" ? "radar, orbit " + r.tiles.join("/") : "cloud " + pct(r.cloud_scl);
   }
   function unique(a) { return a.filter(function (v, i) { return a.indexOf(v) === i; }); }
@@ -150,7 +154,7 @@
 
   // Image types come from every run that shares this exact box, so Radar is offered next to True colour and
   // SWIR even though radar frames are separate runs.
-  var PROD_ORDER = ["truecolour", "swir", "radar"];
+  var PROD_ORDER = ["truecolour", "swir", "radar", "radarchange", "radaroutline"];
   function areaProducts(r) {
     var k = areaKey(r), out = [];
     RUNS.forEach(function (x) {
@@ -215,6 +219,8 @@
     var shown = S.mode === "compare" ? [S.left, S.right] : [r.id + "|" + S.prod];
     var usesSwir = shown.some(function (k) { return /\|swir$/.test(k || ""); });
     var usesRadar = shown.some(function (k) { return /\|radar$/.test(k || ""); });
+    var usesChange = shown.some(function (k) { return /\|radar(change|outline)$/.test(k || ""); });
+    var ch = r.kind === "change" ? r.change : null;
     var isRadar = r.source === "sentinel-1";
     $("#info").innerHTML =
       "<h2>" + esc(areaName(r)) + " &middot; " + esc(r.date) + "</h2>" +
@@ -225,6 +231,11 @@
       "<div><b>" + (isRadar ? "Orbit (direction + track)" : r.source === "landsat" ? "Path/rows" : "Tiles") + "</b>" +
       esc(r.tiles.join(", ")) + "</div>" +
       "<div><b>Coverage of area</b>" + pct(r.coverage) + "</div>" +
+      (ch ? "<div><b>Earlier passes (normal)</b>" + esc(ch.before_dates.join(", ")) + "</div>" +
+        "<div><b>Later pass</b>" + esc(ch.after_date) + " (change date asked: " + esc(ch.change_date) + ")</div>" +
+        "<div><b>Candidate burned area</b>" + ch.flagged_ha.toLocaleString() + " ha (" + ch.flagged_pct + "% of the area), " +
+        ch.patches + " patch" + (ch.patches === 1 ? "" : "es") + (ch.patches > ch.patches_shown ? ", largest " + ch.patches_shown + " outlined" : "") + "</div>" +
+        "<div><b>Echo rose (not flagged)</b>" + ch.increase_ha.toLocaleString() + " ha</div>" : "") +
       (isRadar ? "" :
         "<div><b>Cloud, scene metadata</b>" + pct(r.cloud_meta) + "</div>" +
         "<div><b>Cloud, SCL in area</b>" + pct(r.cloud_scl) + "</div>" +
@@ -236,6 +247,9 @@
       '<div class="links">' + links.join("") + "</div>" +
       (usesSwir ? '<div class="key">' + esc(SWIR_KEY) + "</div>" : "") +
       (usesRadar ? '<div class="key">' + esc(RADAR_KEY) + "</div>" : "") +
+      (usesChange ? '<div class="key">' + esc(CHANGE_KEY) + "</div>" : "") +
+      (ch ? '<div class="warnbox"><b>Candidates, not confirmed.</b> Sensitive setting: it flags any clear fall in the VH echo of at least ' +
+        esc(ch.min_patch_ha) + " ha, so expect false alarms (clearing, harvest, flooding, wet ground). Check against SWIR.</div>" : "") +
       (isRadar ? "" : '<div class="note">SCL cloud can mislabel haze, smoke or bright bare ground, so check the picture.</div>');
   }
 
@@ -375,7 +389,7 @@
   window.addEventListener("resize", function () { if (S.mode !== "map") layout(); });
 
   // ---------------------------------------------------------------- map
-  var map = null, overlay = null, overlayKey = null, aoiGroup = null;
+  var map = null, overlay = null, overlayKey = null, aoiGroup = null, candGroup = null, candShown = null, candCache = {};
   function ensureMap() {
     if (map) return;
     map = L.map("map", { worldCopyJump: false });
@@ -386,8 +400,9 @@
         maxZoom: 19, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" });
     osm.addTo(map);
     aoiGroup = L.layerGroup().addTo(map);   // outline + centre of the area of interest, switchable
+    candGroup = L.layerGroup().addTo(map);  // candidate burned areas from the radar change map, switchable
     L.control.layers({ "OpenStreetMap": osm, "Esri imagery": esri, "No basemap": L.layerGroup() },
-      { "Area of interest outline": aoiGroup }, { collapsed: true }).addTo(map);
+      { "Area of interest outline": aoiGroup, "Candidate burned areas (radar change)": candGroup }, { collapsed: true }).addTo(map);
     L.control.scale({ imperial: false }).addTo(map);
   }
   // Dashed outline of the exact box (dark halo under a bright line so it reads on imagery and on the
@@ -403,9 +418,35 @@
         { permanent: true, direction: "right", offset: [8, 0], className: "aoi-tip" })
       .addTo(aoiGroup);
   }
+  // Outlines of the newest radar change map for this exact box, drawn over whatever image is shown (so they can be
+  // checked against SWIR or true colour).
+  function candRun(r) {
+    if (r.candidates) return r;
+    var k = areaKey(r), best = null;
+    RUNS.forEach(function (x) { if (x.candidates && areaKey(x) === k && (!best || x.date > best.date)) best = x; });
+    return best;
+  }
+  function drawCandidates(r) {
+    var c = candRun(r), id = c ? c.id : null;
+    if (id === candShown) return;
+    candShown = id; candGroup.clearLayers();
+    if (!c) return;
+    function draw(gj) {
+      if (candShown !== id) return;
+      candGroup.clearLayers();
+      L.geoJSON(gj, {
+        style: { color: "#ff2d00", weight: 2, fillColor: "#ff2d00", fillOpacity: 0.18 },
+        onEachFeature: function (f, l) { l.bindTooltip("Candidate burned area, " + f.properties.area_ha + " ha (radar, " + c.date + ")"); }
+      }).addTo(candGroup);
+    }
+    if (candCache[id]) draw(candCache[id]);
+    else fetch(c.candidates).then(function (x) { return x.json(); })
+      .then(function (gj) { candCache[id] = gj; draw(gj); }).catch(function () { candShown = null; });
+  }
   function showMap(r) {
     ensureMap();
     drawAoi(r);
+    drawCandidates(r);
     var key = r.id + "|" + S.prod, b = r.bbox;
     // The image is linear in degrees; Leaflet stretches it linearly in Web Mercator. Over boxes of a
     // few degrees near the equator the difference is a few pixels at most.
@@ -521,7 +562,7 @@
 
   function tlRebuild() {   // after a change of run, product or filter: rebuild the frames, keep the nearest date
     var isRadar = S.prod === "radar", orbits = isRadar ? tlOrbits() : [];
-    $("#tlCloudWrap").hidden = isRadar;                       // radar has no cloud
+    $("#tlCloudWrap").hidden = isRadar || /^radar/.test(S.prod);   // radar has no cloud
     $("#tlOrbitWrap").hidden = !(isRadar && orbits.length > 1);
     if (isRadar && orbits.length > 1) {
       if (tl.orbit === null || (tl.orbit !== "" && !orbits.some(function (o) { return o.name === tl.orbit; }))) {
