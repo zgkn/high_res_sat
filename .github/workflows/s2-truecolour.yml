@@ -12,13 +12,14 @@ on:
         required: true
         type: string
       source:
-        description: "Satellite: sentinel-2 (10 m), landsat (30 m) or sentinel-1 (radar; always series, ignores cloud settings)"
+        description: "Satellite: sentinel-2 (10 m), landsat (30 m), sentinel-1 (radar; always series, ignores cloud settings) or all (runs the three side by side)"
         default: sentinel-2
         type: choice
         options:
           - sentinel-2
           - landsat
           - sentinel-1
+          - all
       bbox:
         description: "min_lon,min_lat,max_lon,max_lat"
         default: "114,-2,115,-1"
@@ -68,6 +69,12 @@ permissions:
 
 jobs:
   truecolour:
+    # source "all" fans out into one parallel job per satellite; one finding nothing never stops the others.
+    name: ${{ matrix.source }}
+    strategy:
+      fail-fast: false
+      matrix:
+        source: ${{ fromJSON(inputs.source == 'all' && '["sentinel-2","landsat","sentinel-1"]' || format('["{0}"]', inputs.source)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -82,7 +89,7 @@ jobs:
 
       - name: Make true-colour image
         env:
-          SOURCE: ${{ inputs.source }}
+          SOURCE: ${{ matrix.source }}
           START_DATE: ${{ inputs.start_date }}
           END_DATE: ${{ inputs.end_date }}
           BBOX: ${{ inputs.bbox }}
@@ -108,20 +115,29 @@ jobs:
             --outdir output
           )
           if [ "$SERIES" = "true" ]; then args+=(--series); fi
-          python scripts/s2_truecolour.py "${args[@]}"
+          # exit code 3 = valid request but no usable data for this satellite (no pass, nothing covers the box):
+          # finish green with a warning so one empty satellite does not make a multi-satellite run look broken
+          rc=0
+          python scripts/s2_truecolour.py "${args[@]}" || rc=$?
+          if [ "$rc" -eq 3 ]; then
+            echo "::warning::No usable ${SOURCE} data for this box and period (reason in the job summary)."
+            exit 0
+          fi
+          exit "$rc"
 
       - name: Upload outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: s2-truecolour
+          name: s2-truecolour-${{ matrix.source }}
           path: output/
           retention-days: 30
           if-no-files-found: warn
 
   publish:
     needs: truecolour
-    if: success() && inputs.publish
+    # publish whatever the satellites produced, even if one of them hit a real error
+    if: always() && inputs.publish && needs.truecolour.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # One publisher at a time so two runs never overwrite each other's site update.
@@ -134,7 +150,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: s2-truecolour
+          pattern: s2-truecolour-*
           path: output
 
       - name: Publish to the viewer site
@@ -142,6 +158,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OUTPUT_BRANCH: s2-output
         run: |
-          bash scripts/publish_site.sh output
+          # one sub-folder per satellite (output/s2-truecolour-<source>/)
+          shopt -s nullglob
+          dirs=(output/*/)
+          if [ "${#dirs[@]}" -eq 0 ]; then echo "::warning::Nothing to publish (no satellite produced output)."; exit 0; fi
+          bash scripts/publish_site.sh "${dirs[@]}"
           owner="${GITHUB_REPOSITORY%%/*}"; repo="${GITHUB_REPOSITORY#*/}"
           echo "**Viewer:** https://${owner}.github.io/${repo}/ (needs GitHub Pages enabled on branch \`s2-output\`; allow a minute or two to update)" >> "$GITHUB_STEP_SUMMARY"
