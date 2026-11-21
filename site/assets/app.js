@@ -148,6 +148,35 @@
     return r && r.images[p[1]] ? { run: r, prod: p[1] } : null;
   }
 
+  // Image types come from every run that shares this exact box, so Radar is offered next to True colour and
+  // SWIR even though radar frames are separate runs.
+  var PROD_ORDER = ["truecolour", "swir", "radar"];
+  function areaProducts(r) {
+    var k = areaKey(r), out = [];
+    RUNS.forEach(function (x) {
+      if (areaKey(x) !== k) return;
+      x.composites.forEach(function (c) { if (x.images[c] && out.indexOf(c) < 0) out.push(c); });
+    });
+    return PROD_ORDER.filter(function (c) { return out.indexOf(c) >= 0; })
+      .concat(out.filter(function (c) { return PROD_ORDER.indexOf(c) < 0; }));
+  }
+  function nearestWith(r, prod) {   // the run of this box, with that image type, closest in date
+    var k = areaKey(r), t = Date.parse(r.date), best = null, bd = Infinity;
+    RUNS.forEach(function (x) {
+      if (areaKey(x) !== k || !x.images[prod]) return;
+      var d = Math.abs(Date.parse(x.date) - t);
+      if (d < bd) { bd = d; best = x; }
+    });
+    return best;
+  }
+  function ensureProduct(r) {
+    if (r.images[S.prod]) return r;
+    var n = areaProducts(r).indexOf(S.prod) >= 0 ? nearestWith(r, S.prod) : null;
+    if (n) { S.run = n.id; return n; }
+    S.prod = r.composites[0];
+    return r;
+  }
+
   function renderToolbar() {
     var r = byId(S.run), aois = aoiList(), cur = aoiKey(r);
     $("#aoiSel").innerHTML = aois.map(function (a) {
@@ -158,7 +187,7 @@
       b.setAttribute("aria-selected", b.dataset.mode === S.mode ? "true" : "false");
     });
     $("#prodBar").hidden = S.mode === "compare";
-    $("#prodBar").innerHTML = r.composites.map(function (c) {
+    $("#prodBar").innerHTML = areaProducts(r).map(function (c) {
       return '<button type="button" data-prod="' + c + '" aria-pressed="' + (c === S.prod) + '">' +
         esc(SHORT[c] || c) + "</button>";
     }).join("");
@@ -397,14 +426,26 @@
   // Frames = every published run with the selected run's exact box that has the chosen image type, oldest
   // first (all satellites unless the satellite filter is set). Scrub, step or play to watch the area change;
   // zoom and position are kept from frame to frame.
-  var tl = { frames: [], idx: 0, cloud: 100, speed: 700, timer: null, cache: {}, down: false };
+  var tl = { frames: [], idx: 0, cloud: 100, speed: 700, timer: null, cache: {}, down: false, orbit: null };
+
+  // Radar passes from different orbits (flight direction + track) look different, so the slider shows one orbit
+  // at a time (the one with most passes by default), or all of them.
+  function tlOrbits() {
+    var k = areaKey(byId(S.run)), cnt = {};
+    RUNS.forEach(function (x) {
+      if (areaKey(x) === k && x.images.radar) { var o = x.tiles.join("/"); cnt[o] = (cnt[o] || 0) + 1; }
+    });
+    return Object.keys(cnt).sort(function (a, b) { return cnt[b] - cnt[a]; })
+      .map(function (o) { return { name: o, n: cnt[o] }; });
+  }
 
   function tlClass(r) { var c = r.cloud_scl; return c == null ? "na" : c <= 20 ? "good" : c <= 40 ? "ok" : "bad"; }
   function tlFrames() {
     var k = areaKey(byId(S.run));
     return RUNS.filter(function (x) {
       return areaKey(x) === k && x.images[S.prod] && (S.sat === "all" || satKey(x) === S.sat) &&
-        (x.cloud_scl == null || x.cloud_scl <= tl.cloud);
+        (x.cloud_scl == null || x.cloud_scl <= tl.cloud) &&
+        (S.prod !== "radar" || !tl.orbit || x.tiles.join("/") === tl.orbit);
     }).sort(function (a, b) {
       if (a.date !== b.date) return a.date < b.date ? -1 : 1;
       return (a.generated || "") < (b.generated || "") ? -1 : 1;
@@ -479,6 +520,18 @@
   }
 
   function tlRebuild() {   // after a change of run, product or filter: rebuild the frames, keep the nearest date
+    var isRadar = S.prod === "radar", orbits = isRadar ? tlOrbits() : [];
+    $("#tlCloudWrap").hidden = isRadar;                       // radar has no cloud
+    $("#tlOrbitWrap").hidden = !(isRadar && orbits.length > 1);
+    if (isRadar && orbits.length > 1) {
+      if (tl.orbit === null || (tl.orbit !== "" && !orbits.some(function (o) { return o.name === tl.orbit; }))) {
+        tl.orbit = orbits[0].name;
+      }
+      $("#tlOrbit").innerHTML = '<option value="">All orbits</option>' + orbits.map(function (o) {
+        return '<option value="' + esc(o.name) + '">' + esc(o.name) + " (" + o.n + " pass" + (o.n === 1 ? "" : "es") + ")</option>";
+      }).join("");
+      $("#tlOrbit").value = tl.orbit;
+    } else tl.orbit = isRadar ? "" : null;
     var curDate = Date.parse(byId(S.run).date), curId = S.run;
     tl.frames = tlFrames();
     tlDraw();
@@ -537,6 +590,7 @@
   $("#tlNext").addEventListener("click", function () { tlPlay(false); tlSet(tl.idx + 1); });
   $("#tlSpeed").addEventListener("change", function () { tl.speed = +this.value; if (tl.timer) tlPlay(true); });
   $("#tlCloud").addEventListener("change", function () { tl.cloud = +this.value; tlPlay(false); tlRebuild(); });
+  $("#tlOrbit").addEventListener("change", function () { tl.orbit = this.value; tlPlay(false); tlRebuild(); });
 
   // ---------------------------------------------------------------- orchestration
   function defaults(r) {
@@ -554,7 +608,7 @@
   }
 
   function render() {
-    var r = byId(S.run);
+    var r = ensureProduct(byId(S.run));
     defaults(r);
     renderList(); renderToolbar(); renderInfo();
     var isMap = S.mode === "map", isTl = S.mode === "timeline";
@@ -567,7 +621,12 @@
     writeHash();
   }
 
-  function selectRun(id) { tlPlay(false); S.run = id; S.open[groupKey(byId(id))] = true; resetViewSoon(); render(); }
+  function selectRun(id) {
+    tlPlay(false); S.run = id; S.open[groupKey(byId(id))] = true;
+    var r = byId(id);
+    if (!r.images[S.prod]) S.prod = r.composites[0];   // show the card the user clicked
+    resetViewSoon(); render();
+  }
   function resetViewSoon() { T.k = 1; T.x = 0; T.y = 0; }
 
   $("#runList").addEventListener("click", function (e) {
