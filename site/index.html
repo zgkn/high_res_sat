@@ -16,16 +16,16 @@
 
 <main class="layout">
   <aside class="runs" aria-label="Runs">
-    <label class="filter">Area
-      <select id="areaFilter"></select>
-    </label>
+    <button type="button" class="areabtn" id="areaOpen" aria-haspopup="dialog">Choose area on a map</button>
     <select id="satFilter" class="satfilter" aria-label="Satellite" hidden></select>
     <div id="runList"></div>
   </aside>
 
   <section class="viewer" aria-label="Image viewer">
     <div class="toolbar">
-      <label class="aoi">Area <select id="aoiSel" aria-label="Area of interest"></select></label>
+      <button type="button" class="aoi-btn" id="aoiBtn" aria-haspopup="dialog" title="Choose area on a map">
+        <span class="pin" aria-hidden="true"></span><span id="aoiName"></span><span class="caret" aria-hidden="true">&#9662;</span>
+      </button>
       <div class="seg" id="modeTabs" role="tablist">
         <button type="button" role="tab" data-mode="view">View</button>
         <button type="button" role="tab" data-mode="compare">Compare</button>
@@ -95,6 +95,17 @@
     <div id="info" class="info"></div>
   </section>
 </main>
+
+<div id="areaPanel" class="areapanel" role="dialog" aria-modal="true" aria-labelledby="apTitle" hidden>
+  <div class="ap-card">
+    <div class="ap-head">
+      <h2 id="apTitle">Choose an area</h2>
+      <button type="button" class="ap-x" id="apClose" aria-label="Close">&times;</button>
+    </div>
+    <div id="areaMap" class="ap-map"></div>
+    <div class="ap-legend" id="apLegend"></div>
+  </div>
+</div>
 
 <footer class="foot">
   Contains modified Copernicus Sentinel data, processed from the

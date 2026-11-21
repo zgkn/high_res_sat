@@ -32,7 +32,7 @@
   function byId(id) { return RUNS.filter(function (r) { return r.id === id; })[0]; }
 
   // ---------------------------------------------------------------- state
-  var S = { run: null, mode: "view", prod: "truecolour", left: null, right: null, area: "all", sat: "all", open: {} };
+  var S = { run: null, mode: "view", prod: "truecolour", left: null, right: null, sat: "all", open: {} };
 
   function readHash() {
     var o = {};
@@ -67,13 +67,6 @@
       if (!groups[k]) { groups[k] = { name: groupName(r), runs: [] }; order.push(k); }
       groups[k].runs.push(r);
     });
-    var sel = $("#areaFilter");
-    sel.innerHTML = '<option value="all">All areas (' + order.length + ")</option>" + order.map(function (k) {
-      return '<option value="' + esc(k) + '">' + esc(groups[k].name) + " (" + groups[k].runs.length + ")</option>";
-    }).join("");
-    if (!groups[S.area]) S.area = "all";
-    sel.value = S.area;
-
     var sats = unique(RUNS.map(satKey)), satNames = { "sentinel-2": "Sentinel-2", "landsat": "Landsat 8/9", "sentinel-1": "Sentinel-1 radar" };
     var ss = $("#satFilter");
     ss.hidden = sats.length < 2;
@@ -85,12 +78,11 @@
 
     var html = "";
     order.forEach(function (k) {
-      if (S.area !== "all" && k !== S.area) return;
       var g = groups[k];
       var runs = g.runs.filter(function (r) { return S.sat === "all" || satKey(r) === S.sat; });
       if (!runs.length) return;
       var hasSel = runs.some(function (r) { return r.id === S.run; });
-      var open = S.open[k] !== undefined ? S.open[k] : (hasSel || order.length === 1 || S.area !== "all");
+      var open = S.open[k] !== undefined ? S.open[k] : (hasSel || order.length === 1);
       html += '<details class="group" data-key="' + esc(k) + '"' + (open ? " open" : "") + "><summary>" +
         '<span class="gname">' + esc(g.name) + "</span>" +
         '<span class="gmeta">' + runs.length + " run" + (runs.length === 1 ? "" : "s") + " &middot; " +
@@ -182,11 +174,8 @@
   }
 
   function renderToolbar() {
-    var r = byId(S.run), aois = aoiList(), cur = aoiKey(r);
-    $("#aoiSel").innerHTML = aois.map(function (a) {
-      return '<option value="' + esc(a.key) + '">' + esc(a.name) + " (" + a.runs.length + ")</option>";
-    }).join("");
-    $("#aoiSel").value = cur;
+    var r = byId(S.run);
+    $("#aoiName").textContent = areaName(r);
     Array.prototype.forEach.call(document.querySelectorAll("#modeTabs button"), function (b) {
       b.setAttribute("aria-selected", b.dataset.mode === S.mode ? "true" : "false");
     });
@@ -633,6 +622,104 @@
   $("#tlCloud").addEventListener("change", function () { tl.cloud = +this.value; tlPlay(false); tlRebuild(); });
   $("#tlOrbit").addEventListener("change", function () { tl.orbit = this.value; tlPlay(false); tlRebuild(); });
 
+
+  // ---------------------------------------------------------------- area map
+  // Every area (one label + exact box) as a pin on a map, coloured by how recent its newest image is. Zoom in and
+  // the pin becomes the real box. Click one to open that area in the viewer.
+  var AGE_BANDS = [   // [max age in days, colour, legend text]; blue scale, dark = most recent
+    [3, "#08306b", "last 3 days"], [7, "#2171b5", "4–7 days"], [14, "#6baed6", "8–14 days"],
+    [30, "#c6dbef", "15–30 days"], [Infinity, "#bdbdbd", "older"]];
+  var am = { map: null, pins: null, boxes: null, opener: null };
+  function ageDays(dateStr) { return Math.max(0, (Date.now() - Date.parse(dateStr + "T12:00:00Z")) / 864e5); }
+  function ageBand(dateStr) {
+    var d = ageDays(dateStr);
+    return AGE_BANDS.filter(function (b) { return d <= b[0]; })[0];
+  }
+  function agoTxt(dateStr) {
+    var d = Math.round(ageDays(dateStr));
+    return d <= 0 ? "today" : d === 1 ? "1 day ago" : d + " days ago";
+  }
+  function areaPopup(a, isCur) {
+    var r = a.runs[0], oldest = a.runs[a.runs.length - 1], el = document.createElement("div");
+    el.className = "ap-pop";
+    var sats = unique(a.runs.map(satLabel)).join(", ");
+    el.innerHTML =
+      '<img alt="" src="' + esc(r.thumb) + '">' +
+      "<b>" + esc(a.name) + "</b>" +
+      "<div>" + a.runs.length + " image" + (a.runs.length === 1 ? "" : "s") + " &middot; " + esc(oldest.date) +
+      (oldest.date === r.date ? "" : " → " + esc(r.date)) + "</div>" +
+      "<div>Newest " + esc(agoTxt(r.date)) + " &middot; " + esc(sats) + "</div>" +
+      '<button type="button" class="ap-open">' + (isCur ? "Showing now – close map" : "Open this area") + "</button>";
+    el.querySelector(".ap-open").addEventListener("click", function () {
+      closeAreaMap();
+      if (!isCur) pickArea(a.key);
+    });
+    return el;
+  }
+  function buildAreaMap() {
+    if (!am.map) {
+      am.map = L.map("areaMap", { worldCopyJump: false, zoomSnap: 0.5 });
+      var osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" });
+      var esri = L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+          maxZoom: 19, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" });
+      osm.addTo(am.map);
+      L.control.layers({ "OpenStreetMap": osm, "Esri imagery": esri }, {}, { collapsed: true }).addTo(am.map);
+      L.control.scale({ imperial: false }).addTo(am.map);
+      am.pins = L.layerGroup().addTo(am.map);
+      am.boxes = L.layerGroup();
+      am.map.on("zoomend", function () {   // boxes only once zoomed in far enough to see them
+        if (am.map.getZoom() >= 8) { if (!am.map.hasLayer(am.boxes)) am.boxes.addTo(am.map); }
+        else if (am.map.hasLayer(am.boxes)) am.map.removeLayer(am.boxes);
+      });
+      $("#apLegend").innerHTML = '<span class="lg-t">Newest image:</span>' + AGE_BANDS.map(function (b) {
+        return '<span class="lg"><i style="background:' + b[1] + '"></i>' + esc(b[2]) + "</span>";
+      }).join("");
+    }
+    am.pins.clearLayers(); am.boxes.clearLayers();
+    var cur = aoiKey(byId(S.run)), all = [];
+    aoiList().forEach(function (a) {
+      var r = a.runs[0], b = r.bbox, band = ageBand(r.date), isCur = a.key === cur;
+      var c = [(b[1] + b[3]) / 2, (b[0] + b[2]) / 2], bounds = [[b[1], b[0]], [b[3], b[2]]];
+      all.push(bounds[0], bounds[1]);
+      var pin = L.circleMarker(c, {
+        radius: isCur ? 11 : 8, color: isCur ? "#ffd400" : "#0b1b33", weight: isCur ? 3 : 1.5,
+        fillColor: band[1], fillOpacity: 1 });
+      pin.bindTooltip(a.name, { direction: "top", offset: [0, -8] });
+      pin.bindPopup(function () { return areaPopup(a, isCur); }, { minWidth: 200 });
+      pin.addTo(am.pins);
+      var box = L.rectangle(bounds, { color: isCur ? "#ffd400" : band[1], weight: isCur ? 3 : 2,
+        fillColor: band[1], fillOpacity: 0.12 });
+      box.bindTooltip(a.name, { sticky: true });
+      box.bindPopup(function () { return areaPopup(a, isCur); }, { minWidth: 200 });
+      box.addTo(am.boxes);
+    });
+    return all;
+  }
+  function openAreaMap(opener) {
+    am.opener = opener || null;
+    var panel = $("#areaPanel");
+    panel.hidden = false;
+    document.body.classList.add("ap-lock");
+    var all = buildAreaMap();
+    am.map.invalidateSize();
+    am.map.fitBounds(all, { padding: [40, 40], maxZoom: 9 });
+    am.map.fire("zoomend");
+    $("#apClose").focus();
+  }
+  function closeAreaMap() {
+    $("#areaPanel").hidden = true;
+    document.body.classList.remove("ap-lock");
+    if (am.map) am.map.closePopup();
+    if (am.opener && am.opener.focus) am.opener.focus();
+  }
+  $("#apClose").addEventListener("click", closeAreaMap);
+  $("#areaPanel").addEventListener("click", function (e) { if (e.target === this) closeAreaMap(); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !$("#areaPanel").hidden) closeAreaMap();
+  });
+
   // ---------------------------------------------------------------- orchestration
   function defaults(r) {
     if (r.composites.indexOf(S.prod) < 0) S.prod = r.composites[0];
@@ -674,14 +761,8 @@
     var c = e.target.closest(".card");
     if (c) selectRun(c.dataset.id);
   });
-  $("#aoiSel").addEventListener("change", function () { pickArea(this.value); });
-  $("#areaFilter").addEventListener("change", function () {
-    S.area = this.value;
-    if (S.area === "all") { renderList(); return; }
-    // choosing an area in the list also shows it: the newest image of that area
-    var first = RUNS.filter(function (r) { return groupKey(r) === S.area; })[0];
-    if (first && groupKey(byId(S.run)) !== S.area) pickArea(aoiKey(first)); else renderList();
-  });
+  $("#aoiBtn").addEventListener("click", function () { openAreaMap(this); });
+  $("#areaOpen").addEventListener("click", function () { openAreaMap(this); });
   $("#satFilter").addEventListener("change", function () { S.sat = this.value; renderList(); if (S.mode === "timeline") { tlPlay(false); tlRebuild(); } });
   // <details> toggles don't bubble, so listen in the capture phase to remember which groups are open
   $("#runList").addEventListener("toggle", function (e) {
