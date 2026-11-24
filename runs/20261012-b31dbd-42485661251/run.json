@@ -1,0 +1,45 @@
+{
+ "id": "20261012-b31dbd-42485661251",
+ "label": "2.06S 114.49E zoom-in",
+ "source": "landsat",
+ "satellite": "Landsat 9",
+ "date": "2026-10-12",
+ "bbox": [
+  114.24,
+  -2.31,
+  114.74,
+  -1.81
+ ],
+ "tiles": [
+  "118061",
+  "118062"
+ ],
+ "coverage": 100.0,
+ "cloud_meta": 37.2,
+ "cloud_scl": 2.1,
+ "shadow_scl": 0.2,
+ "fallback": false,
+ "reason": "most recent date with >= 90% coverage and <= 40% SCL cloud",
+ "composites": [
+  "truecolour",
+  "swir"
+ ],
+ "size": [
+  2498,
+  2500
+ ],
+ "scenes_found": 2,
+ "dates_considered": 1,
+ "inputs": {
+  "start_date": "2026-10-10",
+  "end_date": "2026-10-16",
+  "max_cloud": 100.0,
+  "accept_cloud": 40.0,
+  "max_px": 2500,
+  "pick": "latest_acceptable",
+  "tc_style": "soft",
+  "min_coverage": 90
+ },
+ "generated": "2026-11-08T13:35:44+00:00",
+ "run_url": "https://github.com/zgkn/high_res_sat/actions/runs/42485661251"
+}

@@ -1,0 +1,7 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-10-27,49NEC 49NED 49NFC 49NFD,100.0,96.5,98.4,0.4,yes,yes
+2026-10-29,49NFC 49NFD,24.8,87.4,99.9,0.0,no,no
+2026-11-01,49NEC 49NED 49NFC 49NFD,100.0,70.9,43.5,1.4,yes,yes
+2026-11-03,49NEC 49NED 49NFC 49NFD,100.0,11.7,11.3,4.5,yes,yes
+2026-11-06,49NEC 49NED 49NFC 49NFD,100.0,100.0,100.0,0.0,yes,yes
+2026-11-08,49NFC 49NFD,23.2,94.0,97.5,1.0,no,no

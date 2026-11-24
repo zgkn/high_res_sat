@@ -1,0 +1,45 @@
+{
+ "id": "20261120-32933b-sentinel-2",
+ "series": true,
+ "label": "13.07N 106.35E zoom-in",
+ "source": "sentinel-2",
+ "satellite": "Sentinel-2",
+ "date": "2026-11-20",
+ "bbox": [
+  106.099,
+  12.82,
+  106.599,
+  13.32
+ ],
+ "tiles": [
+  "48PXV"
+ ],
+ "coverage": 100.0,
+ "cloud_meta": 10.4,
+ "cloud_scl": 26.9,
+ "shadow_scl": 0.0,
+ "fallback": false,
+ "reason": "series frame: every date with full coverage, any cloud",
+ "composites": [
+  "truecolour",
+  "swir"
+ ],
+ "size": [
+  2435,
+  2500
+ ],
+ "scenes_found": 4,
+ "dates_considered": 4,
+ "inputs": {
+  "start_date": "2026-11-10",
+  "end_date": "2026-11-24",
+  "max_cloud": 100.0,
+  "accept_cloud": 100.0,
+  "max_px": 2500,
+  "pick": "latest_acceptable",
+  "tc_style": "soft",
+  "min_coverage": 90.0
+ },
+ "generated": "2026-11-24T03:41:26+00:00",
+ "run_url": "https://github.com/zgkn/high_res_sat/actions/runs/45321157614"
+}

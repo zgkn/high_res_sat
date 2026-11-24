@@ -1,0 +1,6 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-11-08,47QPU,54.3,40.1,51.8,1.7,no,no
+2026-11-09,47QPU,99.7,10.5,6.2,7.1,yes,yes
+2026-11-11,47QPU,52.2,96.0,96.9,0.0,no,no
+2026-11-14,47QPU,99.5,70.8,79.0,0.8,yes,yes
+2026-11-16,47QPU,52.5,3.9,1.8,0.7,no,no

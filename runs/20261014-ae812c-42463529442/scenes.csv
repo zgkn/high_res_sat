@@ -1,0 +1,3 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-10-14,49MGS 49MGT,100.0,65.7,47.1,0.1,no,yes
+2026-10-16,49MGS,3.2,97.9,99.7,0.0,no,no

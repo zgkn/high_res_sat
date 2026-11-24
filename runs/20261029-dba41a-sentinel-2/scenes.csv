@@ -1,0 +1,5 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-10-27,51MUS 51MUT 51MVS 51MVT,100.0,37.9,13.8,2.2,yes,yes
+2026-10-29,51MUS 51MUT 51MVS 51MVT,100.0,20.9,36.9,3.3,yes,yes
+2026-11-01,51MUS 51MUT 51MVS 51MVT,100.0,22.7,24.4,3.6,yes,yes
+2026-11-06,51MUS 51MUT 51MVS 51MVT,100.0,23.6,23.2,3.9,yes,yes

@@ -1,0 +1,4 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-11-02,54LVR 54MVS,100.0,63.8,90.7,0.0,yes,yes
+2026-11-05,54MVS,4.3,0.2,0.0,0.0,no,no
+2026-11-07,54LVR 54MVS,9.0,81.3,80.0,0.0,no,no

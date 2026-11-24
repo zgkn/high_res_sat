@@ -1,0 +1,13 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-09-22,D104,100.0,n/a,n/a,n/a,no,yes
+2026-09-27,D2,3.3,n/a,n/a,n/a,no,no
+2026-10-01,A53,100.0,n/a,n/a,n/a,no,yes
+2026-10-04,D104,100.0,n/a,n/a,n/a,no,yes
+2026-10-09,D2,3.4,n/a,n/a,n/a,no,no
+2026-10-13,A53,100.0,n/a,n/a,n/a,no,yes
+2026-10-21,D2,3.3,n/a,n/a,n/a,no,no
+2026-10-25,A53,100.0,n/a,n/a,n/a,no,yes
+2026-11-02,D2,3.2,n/a,n/a,n/a,no,no
+2026-11-06,A53,100.0,n/a,n/a,n/a,no,yes
+2026-11-14,D2,3.3,n/a,n/a,n/a,no,no
+2026-11-18,A53,100.0,n/a,n/a,n/a,no,yes

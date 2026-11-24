@@ -1,0 +1,5 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-11-10,48PXV,100.0,79.3,88.9,3.8,yes,yes
+2026-11-15,48PXV,100.0,25.5,23.1,0.1,yes,yes
+2026-11-20,48PXV,100.0,10.4,26.9,0.0,yes,yes
+2026-11-22,48PXV,100.0,51.9,69.7,0.7,yes,yes

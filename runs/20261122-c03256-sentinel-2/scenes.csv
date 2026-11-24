@@ -1,0 +1,5 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-11-10,48NTG 48NTH 48NUG 48NUH,100.0,91.7,100.0,0.0,yes,yes
+2026-11-15,48NTG 48NTH 48NUG 48NUH,100.0,100.0,100.0,0.0,yes,yes
+2026-11-20,48NTG 48NTH 48NUG 48NUH,100.0,72.7,31.3,0.6,yes,yes
+2026-11-22,48NTG 48NTH 48NUG 48NUH,100.0,54.2,48.7,1.7,yes,yes

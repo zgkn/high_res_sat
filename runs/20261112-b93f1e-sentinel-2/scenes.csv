@@ -1,0 +1,5 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-11-12,46QHD 46QHE 47QKU 47QKV,100.0,46.4,50.8,2.2,yes,yes
+2026-11-14,46QHD 46QHE 47QKU 47QKV,100.0,35.8,53.0,0.0,yes,yes
+2026-11-17,46QHD 46QHE 47QKU 47QKV,100.0,57.1,49.9,9.3,yes,yes
+2026-11-22,46QHD 46QHE 47QKU 47QKV,100.0,53.3,61.5,0.0,yes,yes

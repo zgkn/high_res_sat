@@ -1,0 +1,72 @@
+{
+ "id": "change-20261118-ab3fbf-A53",
+ "series": true,
+ "label": "8.21S 138.21E zoom-in",
+ "source": "sentinel-1",
+ "satellite": "Sentinel-1 D",
+ "date": "2026-11-18",
+ "bbox": [
+  137.96,
+  -8.46,
+  138.46,
+  -7.96
+ ],
+ "tiles": [
+  "A53"
+ ],
+ "coverage": 100.0,
+ "cloud_meta": null,
+ "cloud_scl": null,
+ "shadow_scl": null,
+ "fallback": false,
+ "reason": "Radar change: mean of 4 earlier A53 passes vs 2026-11-18; VH fell by more than normal wobble",
+ "composites": [
+  "radarchange",
+  "radaroutline"
+ ],
+ "size": [
+  2474,
+  2500
+ ],
+ "scenes_found": 17,
+ "dates_considered": 17,
+ "inputs": {
+  "start_date": "2026-09-01",
+  "end_date": "2026-12-10",
+  "max_cloud": 100.0,
+  "accept_cloud": 100.0,
+  "max_px": 2500,
+  "pick": "latest_acceptable",
+  "tc_style": "soft",
+  "min_coverage": 90
+ },
+ "generated": "2026-11-21T04:30:41+00:00",
+ "run_url": "https://github.com/zgkn/high_res_sat/actions/runs/44866370884",
+ "kind": "change",
+ "change": {
+  "orbit": "A53",
+  "change_date": "2026-11-10",
+  "before_dates": [
+   "2026-10-01",
+   "2026-10-13",
+   "2026-10-25",
+   "2026-11-06"
+  ],
+  "after_date": "2026-11-18",
+  "threshold_db": {
+   "min": 1.5,
+   "std_mult": 1.5,
+   "scene_sigmas": 3.0,
+   "median_used": 2.78,
+   "scene_shift": 0.01,
+   "scene_noise": 0.93
+  },
+  "flagged_ha": 5622.3,
+  "flagged_pct": 1.83,
+  "increase_ha": 1878.3,
+  "patches": 605,
+  "patches_shown": 605,
+  "min_patch_ha": 0.5,
+  "valid_ha": 306628.5
+ }
+}

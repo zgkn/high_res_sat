@@ -1,0 +1,42 @@
+{
+ "id": "20261014-ae812c-42464651038",
+ "label": "2.93S 113.31E zoom-in",
+ "date": "2026-10-14",
+ "bbox": [
+  113.06,
+  -3.18,
+  113.56,
+  -2.68
+ ],
+ "tiles": [
+  "49MGS",
+  "49MGT"
+ ],
+ "coverage": 100.0,
+ "cloud_meta": 65.7,
+ "cloud_scl": 47.1,
+ "shadow_scl": 0.1,
+ "fallback": true,
+ "reason": "NO date had <= 40% cloud, so this is the clearest date with full coverage (fallback)",
+ "composites": [
+  "truecolour",
+  "swir"
+ ],
+ "size": [
+  2497,
+  2500
+ ],
+ "scenes_found": 3,
+ "dates_considered": 2,
+ "inputs": {
+  "start_date": "2026-10-13",
+  "end_date": "2026-10-18",
+  "max_cloud": 100.0,
+  "accept_cloud": 40.0,
+  "max_px": 2500,
+  "pick": "latest_acceptable",
+  "min_coverage": 90
+ },
+ "generated": "2026-11-08T08:51:20+00:00",
+ "run_url": "https://github.com/zgkn/high_res_sat/actions/runs/42464651038"
+}

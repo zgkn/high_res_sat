@@ -1,0 +1,44 @@
+{
+ "id": "20260817-bafb0e-42463527692",
+ "label": "Barito",
+ "date": "2026-08-17",
+ "bbox": [
+  114.0,
+  -2.0,
+  115.0,
+  -1.0
+ ],
+ "tiles": [
+  "49MHT",
+  "49MHU",
+  "50MKC",
+  "50MKD"
+ ],
+ "coverage": 100.0,
+ "cloud_meta": 17.7,
+ "cloud_scl": 17.2,
+ "shadow_scl": 0.0,
+ "fallback": false,
+ "reason": "most recent date with >= 90% coverage and <= 40% SCL cloud",
+ "composites": [
+  "truecolour",
+  "swir"
+ ],
+ "size": [
+  2499,
+  2500
+ ],
+ "scenes_found": 29,
+ "dates_considered": 9,
+ "inputs": {
+  "start_date": "2026-08-01",
+  "end_date": "2026-08-20",
+  "max_cloud": 100.0,
+  "accept_cloud": 40.0,
+  "max_px": 2500,
+  "pick": "latest_acceptable",
+  "min_coverage": 90
+ },
+ "generated": "2026-11-08T08:35:10+00:00",
+ "run_url": "https://github.com/zgkn/high_res_sat/actions/runs/42463527692"
+}

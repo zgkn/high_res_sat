@@ -1,0 +1,72 @@
+{
+ "id": "change-20261114-d9d3f2-A172",
+ "series": true,
+ "label": "16.68N 100.30E zoom-in",
+ "source": "sentinel-1",
+ "satellite": "Sentinel-1 D",
+ "date": "2026-11-14",
+ "bbox": [
+  100.047,
+  16.432,
+  100.547,
+  16.932
+ ],
+ "tiles": [
+  "A172"
+ ],
+ "coverage": 100.0,
+ "cloud_meta": null,
+ "cloud_scl": null,
+ "shadow_scl": null,
+ "fallback": false,
+ "reason": "Radar change: mean of 4 earlier A172 passes vs 2026-11-14; VH fell by more than normal wobble",
+ "composites": [
+  "radarchange",
+  "radaroutline"
+ ],
+ "size": [
+  2395,
+  2500
+ ],
+ "scenes_found": 22,
+ "dates_considered": 21,
+ "inputs": {
+  "start_date": "2026-08-29",
+  "end_date": "2026-12-07",
+  "max_cloud": 100.0,
+  "accept_cloud": 100.0,
+  "max_px": 2500,
+  "pick": "latest_acceptable",
+  "tc_style": "soft",
+  "min_coverage": 90
+ },
+ "generated": "2026-11-21T04:51:41+00:00",
+ "run_url": "https://github.com/zgkn/high_res_sat/actions/runs/44868032195",
+ "kind": "change",
+ "change": {
+  "orbit": "A172",
+  "change_date": "2026-11-07",
+  "before_dates": [
+   "2026-09-27",
+   "2026-10-09",
+   "2026-10-21",
+   "2026-11-02"
+  ],
+  "after_date": "2026-11-14",
+  "threshold_db": {
+   "min": 1.5,
+   "std_mult": 1.5,
+   "scene_sigmas": 3.0,
+   "median_used": 4.26,
+   "scene_shift": -0.19,
+   "scene_noise": 1.42
+  },
+  "flagged_ha": 7350.2,
+  "flagged_pct": 2.48,
+  "increase_ha": 3296.6,
+  "patches": 2986,
+  "patches_shown": 1500,
+  "min_patch_ha": 0.5,
+  "valid_ha": 296764.8
+ }
+}

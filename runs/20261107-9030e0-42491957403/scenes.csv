@@ -1,0 +1,4 @@
+date,tiles,coverage_pct,cloud_meta_pct,cloud_scl_pct,shadow_scl_pct,acceptable,chosen
+2026-10-28,48MWA 48MWB,100.0,99.3,99.4,0.5,yes,no
+2026-11-02,48MWA 48MWB,100.0,72.9,64.5,9.2,yes,no
+2026-11-07,48MWA 48MWB,100.0,66.1,63.5,3.0,yes,yes
