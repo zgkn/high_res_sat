@@ -55,6 +55,10 @@ on:
         description: "Publish a frame for EVERY date with full coverage (fills the timeline); ignores accept_cloud"
         default: false
         type: boolean
+      min_coverage:
+        description: "Min % of the box a date must cover to count (default 90; lower it, e.g. 85, when a radar swath or tile edge only just misses)"
+        default: "90"
+        type: string
       change_date:
         description: "Radar only, optional (YYYY-MM-DD): when something may have happened (e.g. a fire). Adds a before/after radar change map of candidate burned areas"
         default: ""
@@ -105,6 +109,7 @@ jobs:
           TC_STYLE: ${{ inputs.tc_style }}
           SERIES: ${{ inputs.series }}
           CHANGE_DATE: ${{ inputs.change_date }}
+          MIN_COVERAGE: ${{ inputs.min_coverage }}
         run: |
           args=(
             --source "$SOURCE"
@@ -117,6 +122,7 @@ jobs:
             --composite "$COMPOSITE"
             --tc-style "$TC_STYLE"
             --label "$LABEL"
+            --min-coverage "$MIN_COVERAGE"
             --outdir output
           )
           if [ "$SERIES" = "true" ]; then args+=(--series); fi
